@@ -1,1 +1,1 @@
-Here is all files needed for .ipynb in other folder to run. The path in .ipynb files are hardcoded and pointed directly to the names of files in here.
+Data files can't upload here since they are too large, please refer to UVA OOD: /project/bii_nssac/biocomplexity/c4gc_asw3xp/demo. All of the path in .ipynb files is pointed directly to the names of the files, put them in the same folder will work.
