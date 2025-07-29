@@ -2,3 +2,4 @@ linelist.ipynb: creating normal linelist
 linelist_biased: creating different version of linelists
 Target_LL.ipynb: Plotting the performace of normal version linelist vs. target (for 6 scenarios)
 Target_LL_biased.ipynb: Plotting the performance of different version linelists vs. target (for 6 scenarios)
+Target_LL_regional.ipynb: Testing on how is the performance when we sampling across different regions and combine together
