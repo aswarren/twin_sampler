@@ -20,7 +20,9 @@ python simulate_linelist.py \
   --households ../../va_household.csv \
   --rucc ../../Ruralurbancontinuumcodes2023.csv \
   --out simulated_test_positive_linelist.csv \
-  --seed 42
+  --seed 42 \
+  # Add this for generate different files with different seed
+  --n_seeds 5
 
 # For plotting the result:
 python plot_age_race.py --csv simulated_test_positive_linelist.csv

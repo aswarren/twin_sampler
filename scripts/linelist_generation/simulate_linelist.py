@@ -115,7 +115,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--households", required=True, help="Path to va_household.csv.")
     p.add_argument("--rucc", required=True, help="Path to Ruralurbancontinuumcodes2023.csv (long format).")
     p.add_argument("--out", default="simulated_test_positive_linelist.csv", help="Output CSV path.")
-    p.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility.")
+    p.add_argument("--seed", type=int, default=None, help="Base random seed for reproducibility.")
+    p.add_argument("--n_seeds", type=int, default=1, help="Number of different seeds to generate linelists with.")
     return p.parse_args()
 
 
@@ -129,13 +130,24 @@ def main():
     )
 
     rucc_wide = load_and_pivot_rucc(args.rucc)
-
     df = merge_all(infection_df, household_df, rucc_wide)
 
-    linelist_df = simulate(df, seed=args.seed)
+    # If user provides --seed, use it as a starting seed
+    # Otherwise, default to 0
+    base_seed = args.seed if args.seed is not None else 0
+    seeds = [base_seed + i for i in range(args.n_seeds)]
 
-    linelist_df.to_csv(args.out, index=False)
-    print(f"Wrote {len(linelist_df):,} rows to {args.out}")
+    for s in seeds:
+        linelist_df = simulate(df, seed=s)
+
+        # Add suffix if generating multiple outputs
+        if args.n_seeds > 1:
+            out_path = args.out.replace(".csv", f"_seed{s}.csv")
+        else:
+            out_path = args.out
+
+        linelist_df.to_csv(out_path, index=False)
+        print(f"Wrote {len(linelist_df):,} rows to {out_path}")
 
 
 if __name__ == "__main__":
