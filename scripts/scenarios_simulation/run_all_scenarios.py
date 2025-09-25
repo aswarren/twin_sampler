@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# run_all_scenarios.py (CLI paths + infections required + seeded + budget overrides)
+# run_all_scenarios.py (history-pool + no-replacement + budgets + AUC + 1x3 figs)
 from __future__ import annotations
 import argparse
 import time
@@ -24,7 +24,7 @@ from sampling_algorithms import make_group, kl_dist, ALGORITHMS
 # ----------------- CLI -----------------
 def parse_args():
     ap = argparse.ArgumentParser(
-        description="Run scenarios 1-8; save 3 images (each 1x3). Also outputs AUC rankings. Infections required."
+        description="Run scenarios 1–8; save 3 images (each 1×3). Also outputs AUC rankings. Infections required."
     )
     ap.add_argument("--linelist", required=True, help="Path to simulated_test_positive_linelist.csv")
     ap.add_argument("--population", required=True, help="Path to va_persontrait_epihiper.txt (skiprows=1)")
@@ -36,15 +36,19 @@ def parse_args():
     ap.add_argument("--seed", type=int, default=42, help="Global random seed (default: 42)")
     ap.add_argument("--roll-win-inf", type=int, default=4, help="Rolling window (weeks) for infections Plot 3 (default: 4)")
 
-    # ---- Sampling budget overrides (new) ----
+    # ---- Sampling budget overrides ----
     ap.add_argument("--batch-size", type=int,
                     help="Fixed weekly sampling budget N. If set, overrides fraction/cap for all scenarios.")
     ap.add_argument("--batch-frac", type=float,
-                    help="Override scenario batch_frac (0.0-1.0) for all scenarios.")
+                    help="Override scenario batch_frac (0.0–1.0) for all scenarios.")
     ap.add_argument("--batch-cap", type=int,
                     help="Override scenario batch_cap for all scenarios.")
     ap.add_argument("--min-per-group", type=int,
                     help="Override scenario min_per_group for all scenarios.")
+
+    # ---- No-replacement across weeks (per algorithm) ----
+    ap.add_argument("--no-replacement", action="store_true",
+                    help="If set, do not re-sample the same row across weeks (per algorithm).")
 
     return ap.parse_args()
 
@@ -209,12 +213,14 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
       - batch_frac: float
       - batch_cap: int
       - min_per_group: int
+      - no_replacement: bool
     """
     overrides = overrides or {}
     ov_fixed = overrides.get("batch_size_fixed", None)
     ov_frac  = overrides.get("batch_frac", None)
     ov_cap   = overrides.get("batch_cap", None)
     ov_mpg   = overrides.get("min_per_group", None)
+    ov_norep = bool(overrides.get("no_replacement", False))
 
     weekly_hist = {algo: [] for algo in ALGORITHMS.keys()}
     per_algo_eval, per_algo_time = {}, {}
@@ -224,34 +230,66 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
 
     for algo_name, sampler in ALGORITHMS.items():
         t0 = time.perf_counter()
-
         state = {}
+
+        # For no-replacement: track used base indices (from line_df) per algorithm
+        used_idx: set[int] = set()
+
         dec_win = scfg.get("decision_window_weeks", None)
         recent = deque(maxlen=max(0, (dec_win or 1) - 1))
         current_week = start_date
         week_idx_for_target = 0
         rng = algo_rngs[algo_name]
 
+        # starting bound for "history" pool (all past weeks up to current)
+        first_window_start = start_date - pd.Timedelta(days=7)
+
         while True:
             prev_mon = current_week - timedelta(days=7)
             prev_sun = current_week - timedelta(days=1)
             week_df = line_df[(line_df[date_field] >= prev_mon) & (line_df[date_field] <= prev_sun)]
+
+            # Progress the weekly clock only if the *weekly* pool is viable (unchanged behavior)
             if len(week_df) < min_pool:
                 break
 
-            # ---- Effective sampling knobs (apply overrides) ----
+            # ----- choose the sampling pool -----
+            if scfg.get("pool_mode") == "history":
+                # all rows from the first window start through end of current week
+                first_window_start = start_date - pd.Timedelta(days=7)
+                pool_df = line_df[(line_df[date_field] >= first_window_start) & (line_df[date_field] <= prev_sun)]
+
+            elif scfg.get("pool_mode") == "rolling":
+                w = int(scfg.get("pool_window_weeks", 4))
+                pool_start = current_week - pd.Timedelta(weeks=w)
+                pool_df = line_df[(line_df[date_field] >= pool_start) & (line_df[date_field] <= prev_sun)]
+
+            else:
+                # default: current week's pool only
+                pool_df = week_df
+
+            # No-replacement: drop rows already used by this algorithm in previous weeks
+            if ov_norep or scfg.get("no_replacement", False):
+                if len(used_idx) > 0:
+                    pool_df = pool_df.drop(index=list(used_idx), errors="ignore")
+
+            # ----- Effective sampling knobs (apply overrides) -----
             eff_frac = ov_frac if ov_frac is not None else scfg["batch_frac"]
             eff_cap  = ov_cap  if ov_cap  is not None else scfg["batch_cap"]
             eff_mpg  = ov_mpg  if ov_mpg  is not None else scfg["min_per_group"]
 
             if ov_fixed is not None:
-                batch_size = int(min(max(0, ov_fixed), len(week_df)))
+                batch_size = int(min(max(0, ov_fixed), len(pool_df)))
             else:
-                batch_size = int(min(eff_frac * len(week_df), eff_cap))
+                batch_size = int(min(eff_frac * len(pool_df), eff_cap))
 
             min_per_group = int(max(0, eff_mpg))
 
-            # target distribution for this week
+            # If pool exhausted (e.g., due to no-replacement), stop this algorithm gracefully
+            if batch_size <= 0 or len(pool_df) == 0:
+                break
+
+            # ----- target distribution for this week -----
             if scfg.get("target_type") == "blend":
                 ll_mode   = scfg.get("target_linelist_mode", "cumulative")
                 ll_window = scfg.get("target_linelist_window", 4)
@@ -265,7 +303,7 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
             else:
                 target_dist = pop_dist_static
 
-            # prior groups
+            # ----- prior groups -----
             if dec_win is None:
                 prior_groups = []
                 for s in weekly_hist[algo_name]:
@@ -274,8 +312,13 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
             else:
                 prior_groups = [g for lst in list(recent) for g in lst]
 
-            # sample (seeded)
-            sample_df = sampler(week_df, target_dist, batch_size, min_per_group, prior_groups, state, rng)
+            # ----- sample (seeded) FROM CHOSEN POOL -----
+            sample_df = sampler(pool_df, target_dist, batch_size, min_per_group, prior_groups, state, rng)
+
+            # Update used indices for no-replacement
+            if ov_norep or scfg.get("no_replacement", False):
+                used_idx.update(sample_df.index.tolist())
+
             weekly_hist[algo_name].append(sample_df["group"].value_counts())
             if dec_win is not None:
                 recent.append(sample_df["group"].tolist())
@@ -320,6 +363,7 @@ def main():
         "batch_frac": args.batch_frac,
         "batch_cap": args.batch_cap,
         "min_per_group": args.min_per_group,
+        "no_replacement": args.no_replacement,
     }
 
     # Load core inputs
@@ -356,9 +400,6 @@ def main():
             total_algo_time[algo] += per_algo_time.get(algo, 0.0)
             count_algo_runs[algo] += 1
 
-        csv_path = outdir / f"kl_points_from_plot_{scfg['id']}.csv"
-        pd.DataFrame(rows).to_csv(csv_path, index=False)
-        print(f"Saved: {csv_path}  ({len(rows)} rows)")
         for algo, secs in per_algo_time.items():
             print(f"  {algo} time: {secs:.2f}s")
 
@@ -474,6 +515,53 @@ def main():
     outC = outdir / f"C_vs_rolling{args.roll_win_inf}_infections_1x3.png"
     plt.savefig(outC, dpi=150); print(f"Saved: {outC}")
     plt.close(figC)
+
+    # =================== FIGURE D: Weekly ratios (3 bars per week) ===================
+    # Definitions:
+    # - pool_size = LineList size in the current week
+    # - infections_size = infections size in the current week
+    # - sampled_per_week = samples actually drawn in the replay (pick one scenario+algorithm)
+    #
+    scenario_for_sampled = 1
+    algo_for_sampled = list(ALGORITHMS.keys())[0]
+
+    # Build week-wise counts
+    weeks_n = len(weekly_ll_hist)
+    pool_weekly = [int(weekly_ll_hist[i].sum()) for i in range(weeks_n)]
+    inf_weekly  = [int(weekly_inf_hist[i].sum()) for i in range(weeks_n)]
+
+    # Use the replayed samples we already computed: all_weekly_hist[scenario_id][algo] -> list[Series]
+    sampled_hist_list = all_weekly_hist.get(scenario_for_sampled, {}).get(algo_for_sampled, [])
+    sampled_weekly = [int(s.sum()) if i < len(sampled_hist_list) else 0 for i, s in enumerate(sampled_hist_list + [pd.Series(dtype=float)]*max(0, weeks_n - len(sampled_hist_list)))]
+
+    # Safe division helpers
+    def _safe_div(num, den):
+        return (num / den) if (den is not None and den != 0) else float("nan")
+
+    ratio_pool_over_inf     = [_safe_div(pool_weekly[i], inf_weekly[i]) for i in range(weeks_n)]
+    ratio_sampled_over_inf  = [_safe_div(sampled_weekly[i], inf_weekly[i]) for i in range(weeks_n)]
+    ratio_sampled_over_pool = [_safe_div(sampled_weekly[i], pool_weekly[i]) for i in range(weeks_n)]
+
+    # Plot grouped bars
+    figD, axD = plt.subplots(figsize=(14, 6))
+    x = np.arange(weeks_n) + 1  # week numbers starting at 1
+    bar_w = 0.25
+    axD.bar(x - bar_w, ratio_pool_over_inf,     width=bar_w, label="pool_size / infections_size")
+    axD.bar(x,           ratio_sampled_over_inf, width=bar_w, label="sampled / infections_size")
+    axD.bar(x + bar_w,   ratio_sampled_over_pool,width=bar_w, label="sampled / pool_size")
+
+    axD.set_title(f"Weekly Ratios (Scenario {scenario_for_sampled}, Algo: {algo_for_sampled})")
+    axD.set_xlabel("Week")
+    axD.set_ylabel("Ratio")
+    axD.set_xlim(0.5, weeks_n + 0.5)
+    axD.grid(True, linestyle="--", alpha=0.6)
+    axD.legend()
+
+    figD.tight_layout()
+    outD = outdir / "D_weekly_sampling_ratios.png"
+    plt.savefig(outD, dpi=150)
+    print(f"Saved: {outD}")
+    plt.close(figD)
 
     # =================== AUC summary CSV (ranked) ===================
     auc_df = pd.DataFrame(auc_rows)

@@ -6,7 +6,6 @@ It loads a synthetic linelist and population file, runs all 8 scenarios in one g
 - Per-scenario CSVs of KL divergence values (one row per week, per algorithm).
 - Three final plots (one per algorithm) comparing all 8 scenarios.
 - Average running time (seconds) across the 8 scenarios for each algorithm.
-- One CSV with all AUCs and ranks
 
 ---
 
@@ -28,5 +27,5 @@ python run_all_scenarios.py \
   --infections ../../run_03_vadelta_rate_limited_ticks.metadata.fixed_dates.tsv \
   --outdir ./result \
   --batch-size 1000 \
-  --seed 42 \
-  --roll-win-inf 4
+  --no-replacement \
+  --seed 42

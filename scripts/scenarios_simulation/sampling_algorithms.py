@@ -58,7 +58,7 @@ def gittins_sampler_with_min_coverage(
 
     remaining = batch_size - len(sampled_groups)
     if remaining <= 0:
-        return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+        return pd.concat(parts) if parts else pd.DataFrame()
 
     # credit initial picks
     for g in sampled_groups:
@@ -95,7 +95,7 @@ def gittins_sampler_with_min_coverage(
         if need > 0:
             pool = df[df["group"] == g]
             final.append(pool.sample(min(need, len(pool)), random_state=_rint(rng)))
-    return pd.concat(final, ignore_index=True) if final else pd.DataFrame()
+    return pd.concat(final) if final else pd.DataFrame()
 
 def greedy_kl_sampler(
     line_df: pd.DataFrame,
@@ -121,7 +121,7 @@ def greedy_kl_sampler(
 
     remaining = batch_size - len(picked)
     if remaining <= 0:
-        return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+        return pd.concat(parts) if parts else pd.DataFrame()
 
     for _ in range(remaining):
         best_g, best_kl = None, float("inf")
@@ -145,7 +145,7 @@ def greedy_kl_sampler(
     for g, cnt in counts.items():
         pool = df[df["group"] == g]
         final.append(pool.sample(min(cnt, len(pool)), random_state=_rint(rng)))
-    return pd.concat(final, ignore_index=True) if final else pd.DataFrame()
+    return pd.concat(final) if final else pd.DataFrame()
 
 def uniform_sampler_with_min_coverage(
     line_df: pd.DataFrame,
@@ -169,7 +169,7 @@ def uniform_sampler_with_min_coverage(
         return initial
     take = min(remaining, len(df))
     rand = df.sample(take, replace=False, random_state=_rint(rng)) if take > 0 else pd.DataFrame()
-    return pd.concat([initial, rand], ignore_index=True)
+    return pd.concat([initial, rand])
 
 # mapping used by the driver
 ALGORITHMS = {
