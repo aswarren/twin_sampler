@@ -1,0 +1,55 @@
+# ascertainment_parameters.yaml
+#
+# This file contains the default parameters for the probabilistic case
+# ascertainment model. The model calculates a final ascertainment probability
+# for each infected agent using a multiplicative formula:
+# P_ascertain = P_base(symptoms) * M_age * M_ses * M_geo * M_comorbid
+#
+# All values are derived from a systematic review of epidemiological literature,
+# primarily using COVID-19 as a proxy for respiratory pathogens.
+
+# --- BASE PROBABILITY ---
+# Determined by the agent's symptom severity, as this is the single
+# most powerful predictor of ascertainment.
+# Sources: [6, 7, 20, 19, 9]
+base_probability:
+  symptom_severity:
+    asymptomatic: 0.05
+    mild: 0.20
+    severe: 0.95 # Includes hospitalized/critical cases
+
+# --- MULTIPLICATIVE MODIFIERS ---
+# These values adjust the base probability up or down based on other
+# key demographic and clinical factors.
+
+# Age-based modifier. Reflects differences in disease severity and
+# testing patterns across age groups.
+# Sources: 
+multipliers:
+  age_group:
+    '0-17': 0.75
+    '18-49': 1.0
+    '50-64': 1.25
+    '65+': 1.50
+
+  # Socioeconomic status modifier. Models the impact of income on
+  # access to testing and healthcare.
+  # Sources: 
+  socioeconomic_status:
+    low: 0.80
+    middle: 1.0
+    high: 1.10
+
+  # Geographic modifier. Accounts for disparities in healthcare
+  # infrastructure and testing access between urban and rural areas.
+  # Sources: 
+  geography:
+    rural: 0.85
+    urban: 1.0
+
+  # Comorbidity modifier. Acts as a proxy for increased risk of
+  # severe disease, which leads to a higher likelihood of diagnosis.
+  # Sources: 
+  comorbidities:
+    present: 1.20
+    absent: 1.0
