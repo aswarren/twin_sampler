@@ -11,7 +11,7 @@
 # --- BASE PROBABILITY ---
 # Determined by the agent's symptom severity, as this is the single
 # most powerful predictor of ascertainment.
-# Sources: [6, 7, 20, 19, 9]
+# Sources: [1, 6, 34, 2, 3, 7, 8, 23]
 base_probability:
   symptom_severity:
     asymptomatic: 0.05
@@ -24,7 +24,7 @@ base_probability:
 
 # Age-based modifier. Reflects differences in disease severity and
 # testing patterns across age groups.
-# Sources: 
+# Sources: [34, 8, 9, 10, 23, 11]
 multipliers:
   age_group:
     '0-17': 0.75
@@ -34,7 +34,7 @@ multipliers:
 
   # Socioeconomic status modifier. Models the impact of income on
   # access to testing and healthcare.
-  # Sources: 
+  # Sources: [12, 13, 14, 28]
   socioeconomic_status:
     low: 0.80
     middle: 1.0
@@ -42,14 +42,14 @@ multipliers:
 
   # Geographic modifier. Accounts for disparities in healthcare
   # infrastructure and testing access between urban and rural areas.
-  # Sources: 
+  # Sources: [15, 31, 35]
   geography:
     rural: 0.85
     urban: 1.0
 
   # Comorbidity modifier. Acts as a proxy for increased risk of
   # severe disease, which leads to a higher likelihood of diagnosis.
-  # Sources: 
+  # Sources: [16, 17, 32, 33]
   comorbidities:
     present: 1.20
     absent: 1.0
