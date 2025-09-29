@@ -15,7 +15,6 @@ Usage:
       --households va_household.csv \
       --rucc Ruralurbancontinuumcodes2023.csv \
       --out simulated_test_positive_linelist.csv \
-      --seed 42
 """
 
 from __future__ import annotations
@@ -143,7 +142,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--households", required=True, help="Path to va_household.csv.")
     p.add_argument("--rucc", required=True, help="Path to Ruralurbancontinuumcodes2023.csv (long format).")
     p.add_argument("--out", default="simulated_test_positive_linelist.csv", help="Output CSV path.")
-    p.add_argument("--seed", type=int, default=None, help="Base random seed for reproducibility.")
+    p.add_argument("--seed", type=int, default=42, help="Base random seed for reproducibility.")
     p.add_argument("--n_seeds", type=int, default=1, help="Number of different seeds to generate linelists with.")
     p.add_argument("--ascertain", required=True, help="Path to ascertainment_parameters.yaml file.")
 
@@ -169,7 +168,7 @@ def main():
     
         for s in seeds:
             # Pass the merged df AND the params to the simulate function
-            linelist_df = simulate(df, params=params, seed=s)
+            linelist_df = simulate_ascertainment(df, params=params, seed=s)
 
             if args.n_seeds > 1:
                 out_path = args.out.replace(".csv", f"_seed{s}.csv")
