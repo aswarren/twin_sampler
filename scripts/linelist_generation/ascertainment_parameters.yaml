@@ -4,6 +4,15 @@
 # The model is based on a severity gradient, with base probabilities modified by
 # demographic, socioeconomic, geographic, and clinical factors.
 # Each parameter is justified with citations from the accompanying bibliography.
+# The ascertainment model, calculates
+# the probability that an infected individual is detected and reported by the
+# surveillance system. The final probability is calculated as:
+#
+# P(detection) = P_base * M_age * M_ses * M_geo * M_comorbidity
+#
+# Where P_base is determined by symptom severity and M_* are multipliers
+# for different demographic and clinical factors. All values are based on a
+# review of epidemiological literature on COVID-19.
 
 ascertainment_parameters:
   base_probabilities:
