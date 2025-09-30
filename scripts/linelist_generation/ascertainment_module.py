@@ -23,11 +23,11 @@ def _map_abm_state_to_model_inputs(exit_state: str) -> tuple[str | None, str]:
     age_code = parts[1] if len(parts) > 1 else 'a'
 
     symptom_severity = None
-    if state_prefix.startswith('A'):
+    if state_prefix.startswith(('A', 'P')): # Group A and P together
         symptom_severity = 'asymptomatic'
-    elif state_prefix.startswith(('P', 'I')):
+    elif state_prefix.startswith('I'):
         symptom_severity = 'mild'
-    elif state_prefix.startswith(('H', 'hM', 'Vent', 'd')):
+    elif state_prefix.startswith(('H', 'hM', 'Vent', 'D', 'dM', 'dVent', 'dH')): # Added 'dm' for completeness
         symptom_severity = 'severe'
 
     age_map = {'p': '0-17', 'a': '18-49', 'o': '50-64', 's': '65+'}
