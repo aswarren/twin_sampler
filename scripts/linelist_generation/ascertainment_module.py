@@ -48,15 +48,25 @@ def preprocess_for_ascertainment(df: pd.DataFrame) -> pd.DataFrame:
     df[['symptom_severity', 'age_group_model']] = pd.DataFrame(mapped_data.tolist(), index=df.index)
 
     # 2. Add placeholder columns if they don't exist in the source data.
-    #    This makes the model more robust.
     if 'ses_category' not in df.columns:
-        df['ses_category'] = 'middle' # Assume middle SES if not specified
+        df['ses_category'] = 'medium' # Assume middle SES if not specified
     if 'location_type' not in df.columns:
         df['location_type'] = 'urban' # Assume urban if not specified
-    if 'has_comorbidities' not in df.columns:
-        df['has_comorbidities'] = False # Assume no comorbidities if not specified
+        
+    if 'comorbidity_category' not in df.columns:
+        if 'has_comorbidities' in df.columns:
+            # If the simple boolean exists, map it to the YAML's default categories
+            # Assuming 'medium_impact' for presence, and 'no_or_low_impact' for absence.
+            # This could be refined if more detail is available.
+            df['comorbidity_category'] = df['has_comorbidities'].apply(
+                lambda x: 'medium_impact' if x else 'no_or_low_impact'
+            )
+        else:
+            # If no comorbidity info exists at all, default everyone to the baseline.
+            df['comorbidity_category'] = 'no_or_low_impact'
 
     return df.dropna(subset=['symptom_severity'])
+
 
 
 def compute_ascertainment_probability(row: pd.Series, params: Dict[str, Any]) -> float:
@@ -65,26 +75,38 @@ def compute_ascertainment_probability(row: pd.Series, params: Dict[str, Any]) ->
     testing_prob.compute_testing_probability().
     """
     try:
-            # Get the severity string (e.g., 'mild', 'severe') from the row
-            severity_key = row['symptom_severity']
-            
-            # Look up the severity_key directly in base_probabilities
-            # AND get the final 'probability' value from the nested dictionary.
-            base_prob = params['base_probabilities'][severity_key]['probability']
-            #base_prob = params['base_probabilities']['symptom_severity'][row['symptom_severity']]
-            age_multiplier = params['modifiers']['age']['age_group_model'][row['age_group_model']]
-            ses_multiplier = params['modifiers']['socioeconomic_status'][row['ses_category']]
-            geo_multiplier = params['modifiers']['geography'][row['location_type']]
-            
-            comorbidity_status = 'present' if row['has_comorbidities'] else 'absent'
-            comorbidity_multiplier = params['modifiers']['comorbidity'][comorbidity_status]
+        # --- ALL LOOKUPS BELOW ARE NOW CORRECTED ---
 
-            final_prob = (base_prob * age_multiplier * ses_multiplier *
-                        geo_multiplier * comorbidity_multiplier)
-            return min(final_prob, 1.0)
+        # 1. Base Probability (This was already correct)
+        severity_key = row['symptom_severity']
+        base_prob = params['base_probabilities'][severity_key]['probability']
+        
+        # 2. Age Multiplier
+        age_group_key = row['age_group_model']
+        # FIX: Look up the age_group_key directly and get the 'multiplier'
+        age_multiplier = params['modifiers']['age'][age_group_key]['multiplier']
+
+        # 3. SES Multiplier
+        ses_key = row['ses_category']
+        # FIX: Added ['multiplier'] to get the numeric value
+        ses_multiplier = params['modifiers']['socioeconomic_status'][ses_key]['multiplier']
+        
+        # 4. Geography Multiplier
+        geo_key = row['location_type']
+        # FIX: Added ['multiplier'] to get the numeric value
+        geo_multiplier = params['modifiers']['geography'][geo_key]['multiplier']
+        
+        # 5. Comorbidity Multiplier
+        comorbidity_key = row['comorbidity_category'] # Using the new robust column
+        # FIX: Use the new key and add ['multiplier']
+        comorbidity_multiplier = params['modifiers']['comorbidity'][comorbidity_key]['multiplier']
+
+        # Final calculation
+        final_prob = (base_prob * age_multiplier * ses_multiplier *
+                      geo_multiplier * comorbidity_multiplier)
+                      
+        return min(final_prob, 1.0)
 
     except KeyError as e:
-        # If a category is missing from the YAML, default to a neutral (1.0) or zero probability
-        # to avoid crashing the whole simulation.
         print(f"Warning: Missing parameter or mapping for key {e}. Defaulting to 0.0 probability for this row.")
         return 0.0
