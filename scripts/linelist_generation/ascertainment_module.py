@@ -65,22 +65,23 @@ def compute_ascertainment_probability(row: pd.Series, params: Dict[str, Any]) ->
     testing_prob.compute_testing_probability().
     """
     try:
-        # NOTE: Using the model-derived age group, not the original 'age_group'
-        age_group = row['age_group_model']
-        severity_key = row['symptom_severity']
-        base_prob = params['base_probabilities'][severity_key]['probability']
-        #base_prob = params['base_probabilities']['symptom_severity'][row['symptom_severity']]
-        age_multiplier = params['multipliers']['age_group'][age_group]
-        ses_multiplier = params['multipliers']['socioeconomic_status'][row['ses_category']]
-        geo_multiplier = params['multipliers']['geography'][row['location_type']]
-        
-        comorbidity_status = 'present' if row['has_comorbidities'] else 'absent'
-        comorbidity_multiplier = params['multipliers']['comorbidities'][comorbidity_status]
+            # Get the severity string (e.g., 'mild', 'severe') from the row
+            severity_key = row['symptom_severity']
+            
+            # Look up the severity_key directly in base_probabilities
+            # AND get the final 'probability' value from the nested dictionary.
+            base_prob = params['base_probabilities'][severity_key]['probability']
+            #base_prob = params['base_probabilities']['symptom_severity'][row['symptom_severity']]
+            age_multiplier = params['modifiers']['age']['age_group_model'][row['age_group_model']]
+            ses_multiplier = params['modifiers']['socioeconomic_status'][row['ses_category']]
+            geo_multiplier = params['modifiers']['geography'][row['location_type']]
+            
+            comorbidity_status = 'present' if row['has_comorbidities'] else 'absent'
+            comorbidity_multiplier = params['modifiers']['comorbidity'][comorbidity_status]
 
-        final_prob = (base_prob * age_multiplier * ses_multiplier *
-                      geo_multiplier * comorbidity_multiplier)
-
-        return min(final_prob, 1.0)
+            final_prob = (base_prob * age_multiplier * ses_multiplier *
+                        geo_multiplier * comorbidity_multiplier)
+            return min(final_prob, 1.0)
 
     except KeyError as e:
         # If a category is missing from the YAML, default to a neutral (1.0) or zero probability
