@@ -251,7 +251,7 @@ def format_final_linelist(
         'race', 'smh_race', 'age_group', 'county_fips', 'hid', 'occupation_socp',
         'FIPS', 'rucc_code', 'admin1', 'admin2', 'admin3', 'admin4', 'hh_size',
         'vehicles', 'hh_income', 'household_language', 'family_type_and_employment_status',
-        'workers_in_family', 'rlid', 'asymptomatic', 'test_prob', 'tested_positive'
+        'workers_in_family', 'rlid', 'asymptomatic', 'test_prob', 'tested_positive', 'exit_state'
     ]
 
     # Ensure all columns from the final schema exist, adding any missing ones as empty.
