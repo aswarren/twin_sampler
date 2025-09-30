@@ -81,17 +81,15 @@ ascertainment_parameters:
         # than younger adults [4] and experiences a notable increase in hospitalization
         # rates (2.9 times higher than the 18-49 baseline).[6] The multiplier
         # reflects this moderately increased likelihood of a detectable outcome.
-      "65-74":
-        multiplier: 1.80
+      "65+":
+        multiplier: 2.15
         sources: [4, 6]
         # Justification: Hospitalization rates increase substantially in this age group
         # (7.3 times higher than baseline).[6] The probability of an infection being
         # asymptomatic continues to decrease with age.[4] The large multiplier
         # reflects the sharply increased probability of an infection progressing to a
         # severe, high-ascertainment state.
-      "75+":
-        multiplier: 2.50
-        sources: [4, 6]
+        #65-74 combined with 75+
         # Justification: This group experiences an exponential increase in hospitalization
         # risk (24.1 times higher than baseline) [6] and has the lowest proportion
         # of asymptomatic infections.[4] The modifier is set to a high value to
