@@ -52,7 +52,7 @@ def process_epihiper(
     print(f"Loading EpiHiper data from {epihiper_path}...")
     epi_df = pd.read_csv(epihiper_path)
     print(f"Loading persontrait data from {persontrait_path}...")
-    person_df = pd.read_csv(persontrait_path) # No index needed for a standard merge
+    person_df = pd.read_csv(persontrait_path,skiprows=1) # No index needed for a standard merge
     print(f"Loading household data from {household_path}...")
     household_df = pd.read_csv(household_path)
     print(f"Loading and pivoting RUCC data from {rucc_path}...")
