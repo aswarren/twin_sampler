@@ -37,7 +37,7 @@ START_TICK=128
 
 #The exit states to focus on
 #right now this is set to the second variant wave. we should change this once we are comfortable with perfomrance
-PREFIX_FILTER="['A2', 'P2', 'I2', 'dm2', 'hM2']"
+PREFIX_FILTER="[\"A2\", \"P2\", \"I2\", \"dm2\", \"hM2\"]"
 
 # A fixed random seed for reproducibility across all runs.
 # Remove the --seed line in the command below to use a different random seed each time.
