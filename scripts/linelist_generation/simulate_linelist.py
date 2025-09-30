@@ -21,7 +21,8 @@ from __future__ import annotations
 import argparse
 import numpy as np
 import pandas as pd
-
+import sys
+import json
 from rucc_utils import load_and_pivot_rucc
 from testing_prob import compute_testing_probability
 from ascertainment_module import (
@@ -229,13 +230,26 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out", default="simulated_test_positive_linelist.csv", help="Output CSV path.")
     p.add_argument("--seed", type=int, default=None, help="Base random seed for reproducibility.")
     p.add_argument("--n_seeds", type=int, default=1, help="Number of different seeds to generate linelists with.")
-    p.add_argument("--prefix_override", nargs="+", default=['A', 'P', 'I', 'dm', 'hM'], help="List of state prefixes to include as infectious (e.g., A P I dm hM).")
+    p.add_argument("--prefix_override", type=str, default="['A', 'P', 'I', 'dm', 'hM']", help="A JSON-formatted string of exit_state prefixes to filter")
+        
     return p.parse_args()
 
 
 
 def main():
     args = parse_args()
+
+    prefix_list = None
+    if args.prefix_override:
+        try:
+            # Safely parse the JSON string from the command line into a Python list
+            prefix_list = json.loads(args.prefix_override)
+            if not isinstance(prefix_list, list):
+                raise ValueError("Parsed object is not a list.")
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"Error: Invalid format for --prefix_override. Please provide a valid JSON list string.")
+            print(f"Details: {e}")
+            sys.exit(1)
     
     # Single call to the new data processing function
     events_df = process_epihiper(
@@ -245,7 +259,7 @@ def main():
         rucc_path=args.rucc,
         start_date=args.start_date,
         start_tick=args.start_tick,
-        prefix_filter=tuple(args.prefix_override)
+        prefix_filter=tuple(prefix_list)
     )
 
     # Load the ascertainment model parameters from the YAML file
@@ -260,6 +274,8 @@ def main():
 
     base_seed = args.seed if args.seed is not None else 0
     seeds = [base_seed + i for i in range(args.n_seeds)]
+
+
 
     for s in seeds:
         print(f"\n--- Running simulation for seed {s} ---")
