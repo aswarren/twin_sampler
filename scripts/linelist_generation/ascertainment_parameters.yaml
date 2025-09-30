@@ -19,7 +19,7 @@ ascertainment_parameters:
     # Base probabilities are stratified by the clinical severity of the infection.
     # This reflects the fundamental bias of surveillance systems toward more severe disease.
     asymptomatic:
-      probability: 0.05
+      probability: 0.01
       sources: [1, 2, 13]
       # Justification: The ascertainment of asymptomatic cases via standard, passive
       # surveillance is extremely low. This is inferred from two key lines of evidence.
