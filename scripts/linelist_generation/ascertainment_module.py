@@ -67,8 +67,9 @@ def compute_ascertainment_probability(row: pd.Series, params: Dict[str, Any]) ->
     try:
         # NOTE: Using the model-derived age group, not the original 'age_group'
         age_group = row['age_group_model']
-        
-        base_prob = params['base_probabilities']['symptom_severity'][row['symptom_severity']]
+        severity_key = row['symptom_severity']
+        base_prob = params['base_probabilities'][severity_key]['probability']
+        #base_prob = params['base_probabilities']['symptom_severity'][row['symptom_severity']]
         age_multiplier = params['multipliers']['age_group'][age_group]
         ses_multiplier = params['multipliers']['socioeconomic_status'][row['ses_category']]
         geo_multiplier = params['multipliers']['geography'][row['location_type']]

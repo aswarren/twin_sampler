@@ -31,7 +31,7 @@ ascertainment_parameters:
       # large asymptomatic pool must be in the low single digits to maintain this average.
       # A value of 0.05 represents a small but non-zero chance of detection, primarily
       # through contact tracing or targeted screening programs.
-    mild_to_moderate_symptomatic:
+    mild:
       probability: 0.30
       sources: [2, 3, 5]
       # Justification: This category represents the bulk of community infections and is
@@ -42,7 +42,7 @@ ascertainment_parameters:
       # tested than asymptomatic ones, a majority are still not officially recorded due to
       # barriers to testing, mildness of symptoms not prompting care-seeking, or other
       # factors.[3, 5]
-    severe_hospitalized:
+    severe:
       probability: 0.98
       sources: [2, 3]
       # Justification: The probability of ascertaining a severe case is near unity.
