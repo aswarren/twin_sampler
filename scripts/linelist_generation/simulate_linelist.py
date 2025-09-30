@@ -225,7 +225,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--people", required=True, dest="persontrait_file", help="Path to va_persontrait_epihiper.txt.")
     p.add_argument("--households", required=True, help="Path to va_household.csv.")
     p.add_argument("--rucc", required=True, help="Path to Ruralurbancontinuumcodes2023.csv.")
-    p.add_argument("--params", required=True, help="Path to ascertainment_parameters.yaml file.")
+    p.add_argument("--ascertain", required=True, help="Path to ascertainment_parameters.yaml file.")
     p.add_argument("--out", default="simulated_test_positive_linelist.csv", help="Output CSV path.")
     p.add_argument("--seed", type=int, default=None, help="Base random seed for reproducibility.")
     p.add_argument("--n_seeds", type=int, default=1, help="Number of different seeds to generate linelists with.")
@@ -249,7 +249,7 @@ def main():
     )
 
     # Load the ascertainment model parameters from the YAML file
-    params = load_ascertainment_parameters(args.params)
+    params = load_ascertainment_parameters(args.ascertain)
 
     base_seed = args.seed if args.seed is not None else 0
     seeds = [base_seed + i for i in range(args.n_seeds)]
