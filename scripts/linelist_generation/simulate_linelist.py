@@ -249,7 +249,14 @@ def main():
     )
 
     # Load the ascertainment model parameters from the YAML file
-    params = load_ascertainment_parameters(args.ascertain)
+    full_params = load_ascertainment_parameters(args.ascertain)
+    
+    # This accounts for the top-level 'ascertainment_parameters' key in the YAML.
+    try:
+        params = full_params['ascertainment_parameters']
+    except KeyError:
+        print(f"Error: The YAML file {args.ascertain} is missing the required top-level 'ascertainment_parameters' key.")
+        return # Exit if the structure is wrong
 
     base_seed = args.seed if args.seed is not None else 0
     seeds = [base_seed + i for i in range(args.n_seeds)]
