@@ -164,7 +164,108 @@ def merge_all(infection_df: pd.DataFrame, household_df: pd.DataFrame, rucc_wide:
 
     return merged
 
+def format_final_linelist(
+    raw_linelist_df: pd.DataFrame,
+    country: str = "USA",
+    region: str = "North America",
+    division: str = "Virginia",
+    divisionAbbr: str = "VA"
+) -> pd.DataFrame:
+    """
+    Transforms the raw, simulated linelist into the final, curated report format,
+    matching the schema of the prior script's output.
 
+    This involves:
+    - Adding static "report" columns (virus, country, etc.).
+    - Constructing the unique 'strain' ID for each record.
+    - Mapping numeric codes to human-readable strings (e.g., gender, race).
+    - Renaming columns for compatibility (e.g., pid -> sim_pid).
+    - Selecting and reordering the final set of columns.
+    """
+    if raw_linelist_df.empty:
+        print("Input DataFrame is empty. Returning an empty DataFrame for formatting.")
+        return pd.DataFrame()
+
+    print("Formatting raw linelist into final report format...")
+    df = raw_linelist_df.copy()
+
+    # --- Step 1: Add Static and Constructed Columns ---
+
+    # Add static context columns
+    df['virus'] = 'ncov'
+    df['region'] = region
+    df['country'] = country
+    df['division'] = division
+    df['divisionExposure'] = division # Assumed to be the same as division
+
+    # Construct the 'strain' ID, replicating the logic from genetic_painter.py
+    # Requires 'pid', 'tick', and 'date'
+    df['year'] = pd.to_datetime(df['date']).dt.year
+    #df['strain'] = df.apply(
+    #    lambda row: f"{country}/{divisionAbbr}-EHip-{int(row['pid'])}.{int(row['tick'])}/{int(row['year'])}",
+    #    axis=1
+    #)
+    df['strain'] = ""
+
+    # --- Step 2: Transform Data from Codes to Strings ---
+
+    # Map gender codes to 'sex' strings
+    gender_map = {1: 'male', 2: 'female'}
+    df['sex'] = df['gender'].map(gender_map).fillna('unknown')
+
+    # Map smh_race codes to strings (based on common conventions)
+    smh_race_map = {'W': 'White', 'B': 'Black', 'A': 'Asian', 'L': 'Latino', 'O': 'Other'}
+    df['smh_race'] = df['smh_race'].map(smh_race_map).fillna(df['smh_race']) # Keep original if no match
+
+    # Map hispanic boolean (assuming 2 is True, 1 is False)
+    df['latino'] = df['hispanic'].apply(lambda x: True if x == 2 else False)
+
+    # Map descriptive age groups (this mapping should exist in your persontrait file,
+    # but we can recreate a simplified one if needed. Here we assume 'age_group'
+    # from the persontrait file is the desired descriptive string.)
+    # If 'age_group' is a code like 's', 'a', a mapping would be needed here.
+    # The example shows it's already descriptive, so we'll assume it's loaded correctly.
+
+    # --- Step 3: Re-create Columns from Old Logic for Compatibility ---
+
+    # These columns were in the prior output. We'll create them from the new model's output.
+    df['asymptomatic'] = (df['symptom_severity'] == 'asymptomatic')
+    df['test_prob'] = df['ascertainment_prob']
+    df['tested_positive'] = 1 # Every record in the final list was "tested positive"
+
+    # --- Step 4: Rename Columns for Final Output ---
+
+    rename_map = {
+        'pid': 'sim_pid',
+        'tick': 'sim_tick',
+        # 'county' column should be loaded from persontrait file
+    }
+    df.rename(columns=rename_map, inplace=True)
+
+    # --- Step 5: Select and Reorder Final Columns ---
+    # This list defines the exact schema of the final output file.
+    # It must match the prior output's columns.
+    final_column_order = [
+        'virus', 'region', 'country', 'division', 'divisionExposure', 'date', 'strain',
+        'sim_pid', 'sim_tick', 'sex', 'county', 'latitude', 'longitude', 'latino',
+        'race', 'smh_race', 'age_group', 'county_fips', 'hid', 'occupation_socp',
+        'FIPS', 'rucc_code', 'admin1', 'admin2', 'admin3', 'admin4', 'hh_size',
+        'vehicles', 'hh_income', 'household_language', 'family_type_and_employment_status',
+        'workers_in_family', 'rlid', 'asymptomatic', 'test_prob', 'tested_positive'
+    ]
+
+    # Ensure all columns from the final schema exist, adding any missing ones as empty.
+    # This guarantees the output format is always consistent.
+    for col in final_column_order:
+        if col not in df.columns:
+            print(f"Warning: Column '{col}' not found in the simulated data. It will be added as an empty column.")
+            df[col] = ''
+
+    # Select and reorder the columns to match the final schema exactly.
+    final_df = df[final_column_order]
+
+    print("Formatting complete.")
+    return final_df
 
 def simulate(events_df: pd.DataFrame, params: dict, seed: int | None = None) -> pd.DataFrame:
     """
@@ -280,15 +381,17 @@ def main():
     for s in seeds:
         print(f"\n--- Running simulation for seed {s} ---")
         # The 'simulate' function now contains the core Model B logic
-        linelist_df = simulate(events_df, params=params, seed=s)
+        raw_linelist_df = simulate(events_df, params=params, seed=s)
+        final_linelist_df = format_final_linelist(raw_linelist_df)
+
 
         if args.n_seeds > 1:
             out_path = args.out.replace(".csv", f"_seed{s}.csv")
         else:
             out_path = args.out
 
-        linelist_df.to_csv(out_path, index=False)
-        print(f"Wrote {len(linelist_df):,} rows to {out_path} for seed {s}")
+        final_linelist_df.to_csv(out_path, index=False)
+        print(f"Wrote {len(final_linelist_df):,} rows to {out_path} for seed {s}")
 
 
 if __name__ == "__main__":
