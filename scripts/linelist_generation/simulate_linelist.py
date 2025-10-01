@@ -38,7 +38,8 @@ def process_epihiper(
     rucc_path: str,
     start_date: str,
     start_tick: int,
-    prefix_filter: tuple
+    prefix_filter: tuple,
+    stop_tick: int | None = None
 ) -> pd.DataFrame:
     """
     Loads raw EpiHiper output, filters for relevant infectious states (A, P, I, dm, hM),
@@ -52,6 +53,14 @@ def process_epihiper(
     # 1. Load all required data files
     print(f"Loading EpiHiper data from {epihiper_path}...")
     epi_df = pd.read_csv(epihiper_path)
+
+    if stop_tick is not None:
+        initial_count = len(epi_df)
+        print(f"Applying stop_tick filter: processing events up to and including tick {stop_tick}.")
+        # Use .copy() to avoid SettingWithCopyWarning later
+        epi_df = epi_df[epi_df['tick'] <= stop_tick].copy()
+        print(f"Filtered to {len(epi_df)} events (from {initial_count}).")
+    
     print(f"Loading persontrait data from {persontrait_path}...")
     person_df = pd.read_csv(persontrait_path,skiprows=1) # No index needed for a standard merge
     print(f"Loading household data from {household_path}...")
@@ -322,7 +331,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--epihiper", required=True, help="Path to raw epihiper ABM output CSV.")
     p.add_argument("--start_date", default="2021-01-01", help="The calendar date corresponding to the start_tick.")
     p.add_argument("--start_tick", type=int, default=0, help="The simulation tick that corresponds to the start_date.")
-    
+    p.add_argument("--stop_tick", type=int, default=None,
+                       help="The simulation tick to stop processing at (inclusive). If not provided, processes all ticks.")
     # Keep the other arguments
     p.add_argument("--people", required=True, dest="persontrait_file", help="Path to va_persontrait_epihiper.txt.")
     p.add_argument("--households", required=True, help="Path to va_household.csv.")
@@ -360,7 +370,8 @@ def main():
         rucc_path=args.rucc,
         start_date=args.start_date,
         start_tick=args.start_tick,
-        prefix_filter=tuple(prefix_list)
+        prefix_filter=tuple(prefix_list),
+        stop_tick=args.stop_tick
     )
 
     # Load the ascertainment model parameters from the YAML file
