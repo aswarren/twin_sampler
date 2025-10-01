@@ -409,8 +409,6 @@ def main():
     base_seed = args.seed if args.seed is not None else 0
     seeds = [base_seed + i for i in range(args.n_seeds)]
 
-    if not base_output_path.endswith(".xz"):
-        base_output_path += ".xz"
 
     for s in seeds:
         print(f"\n--- Running simulation for seed {s} ---")
@@ -420,7 +418,7 @@ def main():
 
 
         if args.n_seeds > 1:
-            out_path = args.out.replace(".csv", f"_seed{s}.csv")
+            out_path = args.out.replace(".csv", f"_seed{s}.csv.xz")
         else:
             out_path = args.out
 
