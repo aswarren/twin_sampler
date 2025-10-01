@@ -285,10 +285,10 @@ def simulate(events_df: pd.DataFrame, params: dict, seed: int | None = None) -> 
         return pd.DataFrame()
 
     rng = np.random.default_rng(seed)
-    
-    # Prepare the DataFrame with necessary columns for the ascertainment model
-    # This adds 'symptom_severity', etc., based on 'exit_state'
-    events_df = preprocess_for_ascertainment(events_df)
+
+    # NOTE: We now assume events_df has already been pre-processed and has the
+    # 'symptom_severity' and 'ascertainment_prob' columns.
+
 
     # Calculate probabilities for ALL potential events at once (vectorized and fast)
     events_df["ascertainment_prob"] = events_df.apply(
@@ -376,13 +376,16 @@ def main():
     )
 
     base_output_path = args.out.replace(".csv", "") # Remove .csv if present
+
+    print("--- Pre-processing all potential events for simulation ---")
+    preprocessed_events_df = preprocess_for_ascertainment(events_df)
     
     if args.output_all_events:
         print("--- Processing and saving all potential events (pre-ascertainment simulation) ---")
         
         # Format the original, pre-simulation events_df using the same function
-        formatted_events_df = format_final_linelist(events_df)
-        
+        formatted_events_df = format_final_linelist(preprocessed_events_df)
+
         # Determine the single, non-seed-specific output path
         all_events_path = f"{base_output_path}_allevents.csv.xz"
 
@@ -394,6 +397,8 @@ def main():
 
     # Load the ascertainment model parameters from the YAML file
     full_params = load_ascertainment_parameters(args.ascertain)
+
+
     
     # This accounts for the top-level 'ascertainment_parameters' key in the YAML.
     try:
@@ -411,7 +416,7 @@ def main():
     for s in seeds:
         print(f"\n--- Running simulation for seed {s} ---")
         # The 'simulate' function now contains the core Model B logic
-        raw_linelist_df = simulate(events_df, params=params, seed=s)
+        raw_linelist_df = simulate(preprocessed_events_df, params=params, seed=s)
         final_linelist_df = format_final_linelist(raw_linelist_df)
 
 
