@@ -34,6 +34,7 @@ PARAMS_FILE="/project/bii_nssac/biocomplexity/c4gc_asw3xp/LineList/asw_test/twin
 # Simulation parameters for date conversion. The start_date corresponds to the start_tick.
 START_DATE="2021-04-07"
 START_TICK=128
+STOP_TICK=397
 
 #The exit states to focus on
 #right now this is set to the second variant wave. we should change this once we are comfortable with perfomrance
@@ -93,6 +94,7 @@ for epi_file in "${EPIHIPER_FILES[@]}"; do
     --ascertain "$PARAMS_FILE" \
     --start_date "$START_DATE" \
     --start_tick "$START_TICK" \
+    --stop_tick "$STOP_TICK" \
     --out "$output_file" \
     --seed "$SEED" \
     --prefix_override "$PREFIX_FILTER"
