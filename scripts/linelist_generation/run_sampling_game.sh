@@ -97,7 +97,8 @@ for epi_file in "${EPIHIPER_FILES[@]}"; do
     --stop_tick "$STOP_TICK" \
     --out "$output_file" \
     --seed "$SEED" \
-    --prefix_override "$PREFIX_FILTER"
+    --prefix_override "$PREFIX_FILTER"\
+    --output_all_events
 
   echo "Finished processing $epi_file."
 done

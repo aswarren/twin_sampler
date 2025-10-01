@@ -339,6 +339,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rucc", required=True, help="Path to Ruralurbancontinuumcodes2023.csv.")
     p.add_argument("--ascertain", required=True, help="Path to ascertainment_parameters.yaml file.")
     p.add_argument("--out", default="simulated_test_positive_linelist.csv", help="Output CSV path.")
+    p.add_argument("--output_all_events", action='store_true', help="If set, also saves a compressed, formatted file of ALL potential events (pre-ascertainment).")
     p.add_argument("--seed", type=int, default=None, help="Base random seed for reproducibility.")
     p.add_argument("--n_seeds", type=int, default=1, help="Number of different seeds to generate linelists with.")
     p.add_argument("--prefix_override", type=str, default='["A", "P", "I", "dm", "hM"]', help="A JSON-formatted string of exit_state prefixes to filter")
@@ -374,6 +375,23 @@ def main():
         stop_tick=args.stop_tick
     )
 
+    base_output_path = args.out.replace(".csv", "") # Remove .csv if present
+    
+    if args.output_all_events:
+        print("--- Processing and saving all potential events (pre-ascertainment simulation) ---")
+        
+        # Format the original, pre-simulation events_df using the same function
+        formatted_events_df = format_final_linelist(events_df)
+        
+        # Determine the single, non-seed-specific output path
+        all_events_path = f"{base_output_path}_allevents.csv.xz"
+
+        # Save the formatted "all events" DataFrame with XZ compression
+        formatted_events_df.to_csv(all_events_path, index=False, compression='xz')
+        print(f"Wrote {len(formatted_events_df):,} potential event rows to {all_events_path}")
+
+
+
     # Load the ascertainment model parameters from the YAML file
     full_params = load_ascertainment_parameters(args.ascertain)
     
@@ -387,7 +405,8 @@ def main():
     base_seed = args.seed if args.seed is not None else 0
     seeds = [base_seed + i for i in range(args.n_seeds)]
 
-
+    if not base_output_path.endswith(".xz"):
+        base_output_path += ".xz"
 
     for s in seeds:
         print(f"\n--- Running simulation for seed {s} ---")
@@ -401,7 +420,7 @@ def main():
         else:
             out_path = args.out
 
-        final_linelist_df.to_csv(out_path, index=False)
+        final_linelist_df.to_csv(out_path, index=False, compression='xz')
         print(f"Wrote {len(final_linelist_df):,} rows to {out_path} for seed {s}")
 
 
