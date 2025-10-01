@@ -331,7 +331,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out", default="simulated_test_positive_linelist.csv", help="Output CSV path.")
     p.add_argument("--seed", type=int, default=None, help="Base random seed for reproducibility.")
     p.add_argument("--n_seeds", type=int, default=1, help="Number of different seeds to generate linelists with.")
-    p.add_argument("--prefix_override", type=str, default="['A', 'P', 'I', 'dm', 'hM']", help="A JSON-formatted string of exit_state prefixes to filter")
+    p.add_argument("--prefix_override", type=str, default='["A", "P", "I", "dm", "hM"]', help="A JSON-formatted string of exit_state prefixes to filter")
         
     return p.parse_args()
 
@@ -339,7 +339,7 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
-
+    
     prefix_list = None
     if args.prefix_override:
         try:
