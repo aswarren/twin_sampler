@@ -290,11 +290,6 @@ def simulate(events_df: pd.DataFrame, params: dict, seed: int | None = None) -> 
     # 'symptom_severity' and 'ascertainment_prob' columns.
 
 
-    # Calculate probabilities for ALL potential events at once (vectorized and fast)
-    events_df["ascertainment_prob"] = events_df.apply(
-        lambda row: compute_ascertainment_probability(row, params), axis=1
-    )
-
     ascertained_pids = set()
     line_list_rows = []
 
@@ -379,6 +374,11 @@ def main():
 
     print("--- Pre-processing all potential events for simulation ---")
     preprocessed_events_df = preprocess_for_ascertainment(events_df)
+
+    # Calculate probabilities for ALL potential events at once
+    preprocessed_events_df["ascertainment_prob"] = preprocessed_events_df.apply(
+        lambda row: compute_ascertainment_probability(row, params), axis=1
+    )
     
     if args.output_all_events:
         print("--- Processing and saving all potential events (pre-ascertainment simulation) ---")
