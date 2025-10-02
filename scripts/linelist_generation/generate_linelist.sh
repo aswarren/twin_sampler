@@ -65,7 +65,7 @@ python "$PYTHON_SCRIPT" \
   --people "$PERSONTRAIT_FILE" \
   --households "$HOUSEHOLD_FILE" \
   --rucc "$RUCC_FILE" \
-  --params "$PARAMS_FILE" \
+  --ascertain "$PARAMS_FILE" \
   --start_date "$START_DATE" \
   --start_tick "$START_TICK" \
   --stop_tick "$STOP_TICK" \
