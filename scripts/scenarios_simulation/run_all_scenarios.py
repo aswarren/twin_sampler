@@ -52,17 +52,38 @@ def parse_args():
 
     return ap.parse_args()
 
+# --------- shared helpers ---------
+# Map short codes to long labels; keep existing long labels untouched.
+AGE_GROUP_MAP = {
+    "p": "Preschool (0-4)",
+    "s": "Student (5-17)",
+    "a": "Adult (18-49)",
+    "o": "Older adult (50-64)",
+    "g": "Senior (65+)",
+}
+
+def normalize_age_group_col(df, col="age_group"):
+    """Map age_group codes (p/s/a/o/g) to long labels; leave long labels as-is."""
+    if col in df.columns:
+        raw = df[col]
+        # case-insensitive match on single-letter codes
+        mapped = (
+            raw.astype(str).str.strip().str.lower()
+            .map(AGE_GROUP_MAP)
+        )
+        # keep original values where no mapping applies (already long labels or NaN)
+        df[col] = mapped.where(mapped.notna(), raw)
+    return df
 
 # ----------------- load & preprocess -----------------
 def load_linelist_and_population(linelist_path, population_path, date_field, start_date, min_pool):
     line_df = pd.read_csv(linelist_path, parse_dates=[date_field])
     pop_df  = pd.read_csv(population_path, skiprows=1)
 
-    # population mappings
-    pop_df["age_group"] = pop_df["age_group"].map({
-        "p": "Preschool (0-4)", "s": "Student (5-17)", "a": "Adult (18-49)",
-        "o": "Older adult (50-64)", "g": "Senior (65+)"
-    })
+    # Normalize age_group in both population and linelist (handles codes or long labels)
+    pop_df  = normalize_age_group_col(pop_df,  "age_group")
+    line_df = normalize_age_group_col(line_df, "age_group")
+
     pop_df = pop_df.rename(columns={"gender": "sex"})
     pop_df["sex"]      = pop_df["sex"].astype(str).map({"1": "male", "2": "female"})
     pop_df["smh_race"] = pop_df["smh_race"].astype(str).map({
@@ -88,31 +109,31 @@ def load_linelist_and_population(linelist_path, population_path, date_field, sta
     return line_df, pop_df, pop_dist_static, weekly_ll_hist
 
 
-def build_weekly_infections(infections_path, pop_df, start_date, num_weeks_ref, date_candidates=None):
+def build_weekly_infections(infections_path, pop_df, start_date, num_weeks_ref, date_col: str = "date"):
     """
     Build weekly infections history aligned to linelist slicing.
-    Requires infections file with a date-like column or a 'tick' + SIMULATION_EPOCH fallback.
+    Now requires a real date column in the infections file (default: 'date').
     """
-    if date_candidates is None:
-        date_candidates = ["date", "Date", "infection_date", "diagnosis_date", "onset_date"]
+    # Let pandas sniff the delimiter (comma, tab, etc.) and avoid skipping header rows.
+    inf = pd.read_csv(infections_path, sep=None, engine="python")
+    inf.columns = [c.strip() for c in inf.columns]
 
-    inf = pd.read_csv(infections_path, sep="\t", skiprows=[1])
-
-    # Ensure there's a usable date column
-    date_col = next((c for c in date_candidates if c in inf.columns), None)
-    if date_col is None:
-        # Fallback from 'tick' if present
-        if "tick" in inf.columns:
-            SIMULATION_EPOCH = pd.to_datetime("2020-01-01")
-            inf["__date"] = SIMULATION_EPOCH + pd.to_timedelta(inf["tick"].astype(int), unit="D")
-            date_col = "__date"
+    inf = normalize_age_group_col(inf, "age_group")
+    if date_col not in inf.columns:
+        # try case-insensitive match (e.g., 'Date', 'DATE')
+        ci_map = {c.lower(): c for c in inf.columns}
+        if date_col.lower() in ci_map:
+            date_col = ci_map[date_col.lower()]
         else:
             raise ValueError(
-                "Infections file needs a date-like column (one of "
-                f"{date_candidates}) or an integer 'tick' column."
+                f"Infections file must include a '{date_col}' column "
+                f"(case-insensitive). Found columns: {list(inf.columns)}"
             )
 
-    inf[date_col] = pd.to_datetime(inf[date_col])
+    # Parse dates
+    inf[date_col] = pd.to_datetime(inf[date_col], errors="coerce")
+    if inf[date_col].isna().all():
+        raise ValueError(f"Unable to parse any dates in infections column '{date_col}'.")
 
     # Map pid -> group using population file
     pid_col = "pid" if "pid" in inf.columns else ("sim_pid" if "sim_pid" in inf.columns else None)
@@ -405,7 +426,7 @@ def main():
 
     # ---------- build infections weekly history ----------
     weekly_inf_hist = build_weekly_infections(
-        args.infections, pop_df, start_date, num_weeks_ref=len(weekly_ll_hist)
+        args.infections, pop_df, start_date, num_weeks_ref=len(weekly_ll_hist), date_col="date"
     )
 
     print("\nReplaying samples for plotting (seeded) …")

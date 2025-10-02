@@ -21,10 +21,10 @@ It loads a synthetic linelist and population file, runs all 8 scenarios in one g
 
 # Run similation with:
 ```bash
-python run_all_scenarios.py \
-  --linelist ../linelist/simulated_test_positive_linelist.csv \
+python3 run_all_scenarios.py \
+  --linelist epihiper_batch_1_0.25_replicate_0.output.csv.gz_linelist.csv.xz \
   --population ../../va_persontrait_epihiper.txt \
-  --infections ../../run_03_vadelta_rate_limited_ticks.metadata.fixed_dates.tsv \
+  --infections epihiper_batch_1_0.25_replicate_0.output.gz_linelist_allevents.csv.xz \
   --outdir ./result \
   --batch-size 1000 \
   --no-replacement \
