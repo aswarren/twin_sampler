@@ -10,6 +10,10 @@
 #   $2: The base path for the output file.
 #
 
+echo "Activating Conda environment..."
+source /project/biocomplexity/asw3xp/miniconda3/etc/profile.d/conda.sh
+conda activate # <-- Assuming a base environment, or specify one like 'conda activate my_env'
+
 # --- Argument Check ---
 if [ "$#" -ne 2 ]; then
     echo "Usage: $0 <input_epihiper_file> <output_base_path>"
@@ -53,7 +57,6 @@ echo "Processing input file: $EPIHIPER_FILE"
 echo "Output will be saved based on: $OUTPUT_FILE"
 echo "" # Add a blank line for readability
 
-source /project/biocomplexity/asw3xp/miniconda3/bin/activate
 
 # Execute the Python script with all the configured parameters
 # NOTE: Corrected --ascertain to --params to match the python script
