@@ -20,7 +20,7 @@ BASE_INPUT_DIR="/project/bii_nssac/epihiper-simulations/pipeline-jc/run/20250120
 BASE_OUTPUT_DIR="/project/bii_nssac/biocomplexity/c4gc_asw3xp/LineList/asw_test/twin_sampler/scripts/linelist_generation/results"
 
 # The path to your worker script
-WORKER_SCRIPT="./worker_run_single_sim.sh"
+WORKER_SCRIPT="./generate_linelist.sh"
 
 
 # --- Job Execution ---
