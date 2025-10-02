@@ -53,6 +53,8 @@ echo "Processing input file: $EPIHIPER_FILE"
 echo "Output will be saved based on: $OUTPUT_FILE"
 echo "" # Add a blank line for readability
 
+source /project/biocomplexity/asw3xp/miniconda3/bin/activatze
+
 # Execute the Python script with all the configured parameters
 # NOTE: Corrected --ascertain to --params to match the python script
 python "$PYTHON_SCRIPT" \
