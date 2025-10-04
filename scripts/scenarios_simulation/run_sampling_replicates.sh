@@ -19,16 +19,17 @@ POP_FILE="/project/bii_nssac/biocomplexity/c4gc_asw3xp/LineList/va_persontrait_e
 OUTROOT="/project/bii_nssac/biocomplexity/c4gc_asw3xp/LineList/asw_test/twin_sampler/scripts/scenarios_simulation/scenario_runs"
 # ------------------------------------------------------
 
-
+set +u
 echo "Activating Conda environment..."
 source /project/biocomplexity/asw3xp/miniconda3/etc/profile.d/conda.sh
 conda activate # <-- Assuming a base environment, or specify one like 'conda activate my_env'
+set -u
 
 RID="${SLURM_ARRAY_TASK_ID}"
 REPL="replicate_${RID}"
 REPDIR="${ROOT_DIR}/${REPL}"
 
-LINELIST_FILE="${REPDIR}/linelist.csv.xz"
+LINELIST_FILE="${REPDIR}/linelist.csv."
 INFECTIONS_FILE="${REPDIR}/linelist_allevents.csv.xz"
 
 # Fallbacks if filenames are longer like earlier examples
