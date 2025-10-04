@@ -73,11 +73,36 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export NUMEXPR_MAX_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export PYTHONUNBUFFERED=1
 
-python3 run_all_scenarios.py \
-  --linelist "${LINELIST_FILE}" \
-  --population "${POP_FILE}" \
-  --infections "${INFECTIONS_FILE}" \
-  --outdir "${OUTDIR}" \
-  --batch-size 1000 \
-  --no-replacement \
-  --seed "${SEED}"
+cmd=(
+    "python3"
+    "run_all_scenarios.py"
+    "--linelist"
+    "${LINELIST_FILE}"
+    "--population"
+    "${POP_FILE}"
+    "--infections"
+    "${INFECTIONS_FILE}"
+    "--outdir"
+    "${OUTDIR}"
+    "--batch-size"
+    "1000"
+    "--no-replacement"
+    "--seed"
+    "${SEED}"
+    "--save-samples"
+)
+
+# --- Echo the command for logging ---
+# The 'printf "%q "' command prints each element of the array,
+# adding quotes if necessary, so it's a perfect representation of the command.
+echo "--- EXECUTING COMMAND ---"
+printf "%q " "${cmd[@]}"
+echo # Add a newline for cleaner log output
+echo "---------------------------"
+
+
+# --- Execute the command ---
+# The "${cmd[@]}" syntax expands the array correctly.
+"${cmd[@]}"
+
+echo "Python script finished for $EPIHIPER_FILE."
