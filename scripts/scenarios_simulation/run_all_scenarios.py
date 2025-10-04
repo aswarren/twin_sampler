@@ -375,6 +375,10 @@ def main():
     args = parse_args()
     outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
 
+    # identifiers so you can aggregate across many runs
+    linelist_id = Path(args.linelist).stem
+    run_id = f"{linelist_id}__seed{args.seed}"
+
     start_date = pd.to_datetime(args.start_date)
     rng_master = np.random.default_rng(args.seed)
 
@@ -396,6 +400,8 @@ def main():
     scenario_series = {algo: {} for algo in ALGORITHMS.keys()}
     total_algo_time = {algo: 0.0 for algo in ALGORITHMS.keys()}
     count_algo_runs = {algo: 0 for algo in ALGORITHMS.keys()}
+    kl_rows = []  # accumulate per-week KL points across all panels (A/B/C)
+
 
     for scfg in SCENARIOS:
         print(f"\n=== Running {scfg['name']} ===")
@@ -417,6 +423,18 @@ def main():
                 label = f"{algo} vs. Line List"
             for i, v in enumerate(ys, start=1):
                 rows.append({"scenario": scfg["id"], "label": label, "week": i, "kl": float(v)})
+                # Panel A ("targets"): save KL per week
+                kl_rows.append({
+                    "run_id": run_id,
+                    "linelist_id": linelist_id,
+                    "algorithm": algo,
+                    "scenario_id": scfg["id"],
+                    "scenario_label": label,
+                    "eval_type": "A_targets",
+                    "roll_window": None,
+                    "week": i,
+                    "kl": float(v),
+                })
             scenario_series[algo][scfg["id"]] = (list(range(1, len(ys)+1)), ys)
             total_algo_time[algo] += per_algo_time.get(algo, 0.0)
             count_algo_runs[algo] += 1
@@ -499,6 +517,19 @@ def main():
             if not ys: continue
             x = list(range(1, len(ys) + 1)); label = SCEN_LABELS[scn]
             ax.plot(x, ys, marker=marker_map.get(scn, "o"), linestyle="-", label=label)
+            # Panel B: save KL per week
+            for i, v in enumerate(ys, start=1):
+                kl_rows.append({
+                    "run_id": run_id,
+                    "linelist_id": linelist_id,
+                    "algorithm": algo,
+                    "scenario_id": scn,
+                    "scenario_label": label,
+                    "eval_type": "B_cumulative_infections",
+                    "roll_window": None,
+                    "week": i,
+                    "kl": float(v),
+                })
             auc_rows.append({
                 "eval_type": "B_cumulative_infections",
                 "algorithm": algo,
@@ -523,6 +554,19 @@ def main():
             if not ys: continue
             x = list(range(1, len(ys) + 1)); label = SCEN_LABELS[scn]
             ax.plot(x, ys, marker=marker_map.get(scn, "o"), linestyle="-", label=label)
+            # Panel C: save KL per week (store rolling window separately)
+            for i, v in enumerate(ys, start=1):
+                kl_rows.append({
+                    "run_id": run_id,
+                    "linelist_id": linelist_id,
+                    "algorithm": algo,
+                    "scenario_id": scn,
+                    "scenario_label": label,
+                    "eval_type": "C_rolling_infections",
+                    "roll_window": int(args.roll_win_inf),
+                    "week": i,
+                    "kl": float(v),
+                })
             auc_rows.append({
                 "eval_type": f"C_rolling_infections_w{args.roll_win_inf}",
                 "algorithm": algo,
@@ -583,6 +627,12 @@ def main():
     plt.savefig(outD, dpi=150)
     print(f"Saved: {outD}")
     plt.close(figD)
+
+    # ------------------- Save per-week KL series for uncertainty bands -------------------
+    kl_df = pd.DataFrame(kl_rows)
+    kl_out = outdir / "KL_series.csv"
+    kl_df.to_csv(kl_out, index=False)
+    print(f"Saved KL series: {kl_out}")
 
     # =================== AUC summary CSV (ranked) ===================
     auc_df = pd.DataFrame(auc_rows)
