@@ -520,8 +520,12 @@ def main():
 
     if not args.no_plots:
         print("\nGenerating plots...")
+        marker_map = {1:"o", 2:"s", 3:"D", 4:"^", 5:"v", 6:">", 7:"P", 8:"X"}
+        algo_list  = list(ALGORITHMS.keys())
+        rng_master2 = np.random.default_rng(args.seed)
         # =================== FIGURE A: targets (1×3) ===================
         figA, axesA = plt.subplots(1, 3, figsize=(21, 6), sharey=True)
+        
         for ax, algo in zip(axesA, algo_list):
             ax.set_title(f"{algo}: Table-3 Scenarios")
             ax.set_xlabel("Week"); ax.set_ylabel("KL" if ax is axesA[0] else "")
