@@ -45,6 +45,13 @@ def parse_args():
                     help="Override scenario batch_cap for all scenarios.")
     ap.add_argument("--min-per-group", type=int,
                     help="Override scenario min_per_group for all scenarios.")
+    # Add a flag to disable plots
+    ap.add_argument("--no-plots", action="store_true",
+                    help="If set, disables the generation of all PNG plot files.")
+
+    # Add a flag to enable saving the selected samples
+    ap.add_argument("--save-samples", action="store_true",
+                    help="If set, saves the full metadata for selected samples for each scenario and algorithm.")
 
     # ---- No-replacement across weeks (per algorithm) ----
     ap.add_argument("--no-replacement", action="store_true",
@@ -244,6 +251,8 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
     ov_norep = bool(overrides.get("no_replacement", False))
 
     weekly_hist = {algo: [] for algo in ALGORITHMS.keys()}
+    weekly_samples = {algo: [] for algo in ALGORITHMS.keys()}
+
     per_algo_eval, per_algo_time = {}, {}
 
     # per-algorithm child RNG (stable split)
@@ -341,6 +350,8 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
                 used_idx.update(sample_df.index.tolist())
 
             weekly_hist[algo_name].append(sample_df["group"].value_counts())
+            weekly_samples[algo_name].append(sample_df)
+
             if dec_win is not None:
                 recent.append(sample_df["group"].tolist())
 
@@ -367,7 +378,8 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
             raise ValueError(f"Unknown eval_metric: {metric}")
         per_algo_eval[algo] = ys
 
-    return weekly_hist, per_algo_eval, per_algo_time
+    return weekly_hist, per_algo_eval, per_algo_time, weekly_samples
+
 
 
 # ----------------- main -----------------
@@ -401,14 +413,18 @@ def main():
     total_algo_time = {algo: 0.0 for algo in ALGORITHMS.keys()}
     count_algo_runs = {algo: 0 for algo in ALGORITHMS.keys()}
     kl_rows = []  # accumulate per-week KL points across all panels (A/B/C)
+    all_weekly_hist = {} # This will be populated to replace the replay loop
+
 
 
     for scfg in SCENARIOS:
         print(f"\n=== Running {scfg['name']} ===")
-        weekly_hist, per_algo_eval, per_algo_time = run_one_scenario(
+        weekly_hist, per_algo_eval, per_algo_time, weekly_samples = run_one_scenario(
             line_df, args.date_field, POP_DIST_STATIC, weekly_ll_hist,
             scfg, rng_master, start_date, args.min_pool, overrides
         )
+
+        all_weekly_hist[scfg["id"]] = weekly_hist
 
         # save per-scenario CSV + collect for final plots
         rows = []
@@ -442,23 +458,40 @@ def main():
         for algo, secs in per_algo_time.items():
             print(f"  {algo} time: {secs:.2f}s")
 
+        if args.save_samples:
+            print(f"  Saving selected samples for {scfg['name']}...")
+            for algo_name, sample_weeks_list in weekly_samples.items():
+                # Check if the list of weekly samples is not empty
+                if not sample_weeks_list:
+                    print(f"    - No samples generated for algorithm '{algo_name}', skipping.")
+                    continue
+                
+                # Combine all weekly sample DataFrames into one large DataFrame
+                full_sample_df = pd.concat(sample_weeks_list, ignore_index=True)
+                
+                # Construct a unique, descriptive filename using the run_id
+                sample_out_path = outdir / f"{run_id}_scenario{scfg['id']}_{algo_name}_samples.csv.xz"
+                
+                # Save the combined DataFrame to a CSV with XZ compression
+                full_sample_df.to_csv(sample_out_path, index=False, compression="xz")
+                print(f"    - Saved {len(full_sample_df)} samples for '{algo_name}' to {sample_out_path}")
+
     # ---------- build infections weekly history ----------
     weekly_inf_hist = build_weekly_infections(
         args.infections, pop_df, start_date, num_weeks_ref=len(weekly_ll_hist), date_col="date"
     )
-
-    print("\nReplaying samples for plotting (seeded) …")
-    marker_map = {1:"o", 2:"s", 3:"D", 4:"^", 5:"v", 6:">", 7:"P", 8:"X"}
-    algo_list  = list(ALGORITHMS.keys())
-    n_algo    = len(algo_list)
-    all_weekly_hist = {}
-    rng_master2 = np.random.default_rng(args.seed)
-    for scfg in SCENARIOS:
-        wh, _, _ = run_one_scenario(
-            line_df, args.date_field, POP_DIST_STATIC, weekly_ll_hist,
-            scfg, rng_master2, start_date, args.min_pool, overrides
-        )
-        all_weekly_hist[scfg["id"]] = wh  # {algo -> [Series]}
+    if False: #this isn't needed now that all_weekly_hist is populated in the original run
+        print("\nReplaying samples for plotting (seeded) …")
+        marker_map = {1:"o", 2:"s", 3:"D", 4:"^", 5:"v", 6:">", 7:"P", 8:"X"}
+        algo_list  = list(ALGORITHMS.keys())
+        all_weekly_hist = {}
+        rng_master2 = np.random.default_rng(args.seed)
+        for scfg in SCENARIOS:
+            wh, _, _ = run_one_scenario(
+                line_df, args.date_field, POP_DIST_STATIC, weekly_ll_hist,
+                scfg, rng_master2, start_date, args.min_pool, overrides
+            )
+            all_weekly_hist[scfg["id"]] = wh  # {algo -> [Series]}
 
     # Small helpers for infections-based y-series
     def _cum_kl_vs(hist_list, ref_hist_list):
@@ -496,154 +529,160 @@ def main():
 
     auc_rows = []  # dicts: eval_type, algorithm, scenario_id, scenario_label, weeks, auc
 
-    # =================== FIGURE A: targets (1×N) ===================
-    figA, axesA = _axes_for_algos(n_algo)
-    for ax, algo in zip(axesA, algo_list):
-        ax.set_title(f"{algo}: Table-3 Scenarios")
-        ax.set_xlabel("Week"); ax.set_ylabel("KL" if ax is axesA[0] else "")
-        for scn in range(1, 9):
-            x, y = scenario_series[algo][scn]
-            label = SCEN_LABELS[scn]
-            ax.plot(x, y, marker=marker_map.get(scn, "o"), linestyle="-", label=label)
-            auc_rows.append({
-                "eval_type": "A_targets",
-                "algorithm": algo,
-                "scenario_id": scn,
-                "scenario_label": label,
-                "weeks": len(y),
-                "auc": series_auc(y),
-            })
-        ax.grid(True, linestyle="--", alpha=0.6); ax.legend(ncol=4, fontsize=8); ax.set_xlim(left=0.9)
-    figA.tight_layout()
-    outA = outdir / "A_table3_targets_1xN.png"
-    plt.savefig(outA, dpi=150); print(f"Saved: {outA}")
-    plt.close(figA)
-
-
-    # =================== FIGURE B: cumulative infections (1×N) ===================
-    figB, axesB = _axes_for_algos(n_algo)
-    for ax, algo in zip(axesB, algo_list):
-        ax.set_title(f"{algo}: KL vs Cumulative Infections")
-        ax.set_xlabel("Week"); ax.set_ylabel("KL" if ax is axesB[0] else "")
-        for scn in range(1, 9):
-            ys = _cum_kl_vs(all_weekly_hist[scn][algo], weekly_inf_hist)
-            if not ys: 
-                continue
-            x = list(range(1, len(ys) + 1)); label = SCEN_LABELS[scn]
-            ax.plot(x, ys, marker=marker_map.get(scn, "o"), linestyle="-", label=label)
-            # Panel B: save KL per week
-            for i, v in enumerate(ys, start=1):
-                kl_rows.append({
-                    "run_id": run_id,
-                    "linelist_id": linelist_id,
+    if not args.no_plots:
+        print("\nGenerating plots...")
+        marker_map = {1:"o", 2:"s", 3:"D", 4:"^", 5:"v", 6:">", 7:"P", 8:"X"}
+        algo_list  = list(ALGORITHMS.keys())
+        rng_master2 = np.random.default_rng(args.seed)
+        # =================== FIGURE A: targets (1×3) ===================
+        figA, axesA = _axes_for_algos(n_algo)
+        for ax, algo in zip(axesA, algo_list):
+            ax.set_title(f"{algo}: Table-3 Scenarios")
+            ax.set_xlabel("Week"); ax.set_ylabel("KL" if ax is axesA[0] else "")
+            for scn in range(1, 9):
+                x, y = scenario_series[algo][scn]
+                label = SCEN_LABELS[scn]
+                ax.plot(x, y, marker=marker_map.get(scn, "o"), linestyle="-", label=label)
+                auc_rows.append({
+                    "eval_type": "A_targets",
                     "algorithm": algo,
                     "scenario_id": scn,
                     "scenario_label": label,
+                    "weeks": len(y),
+                    "auc": series_auc(y),
+                    })
+            ax.grid(True, linestyle="--", alpha=0.6); ax.legend(ncol=4, fontsize=8); ax.set_xlim(left=0.9)
+        figA.tight_layout()
+        outA = outdir / "A_table3_targets_1xN.png"
+        plt.savefig(outA, dpi=150); print(f"Saved: {outA}")
+        plt.close(figA)
+
+        # =================== FIGURE B: cumulative infections (1×3) ===================
+        figB, axesB = _axes_for_algos(n_algo)
+        for ax, algo in zip(axesB, algo_list):
+            ax.set_title(f"{algo}: KL vs Cumulative Infections")
+            ax.set_xlabel("Week"); ax.set_ylabel("KL" if ax is axesB[0] else "")
+            for scn in range(1, 9):
+                ys = _cum_kl_vs(all_weekly_hist[scn][algo], weekly_inf_hist)
+                if not ys:
+                    continue
+                x = list(range(1, len(ys) + 1)); label = SCEN_LABELS[scn]
+                ax.plot(x, ys, marker=marker_map.get(scn, "o"), linestyle="-", label=label)
+                # Panel B: save KL per week
+                for i, v in enumerate(ys, start=1):
+                    kl_rows.append({
+                        "run_id": run_id,
+                        "linelist_id": linelist_id,
+                        "algorithm": algo,
+                        "scenario_id": scn,
+                        "scenario_label": label,
+                        "eval_type": "B_cumulative_infections",
+                        "roll_window": None,
+                        "week": i,
+                        "kl": float(v),
+                        })
+                auc_rows.append({
                     "eval_type": "B_cumulative_infections",
-                    "roll_window": None,
-                    "week": i,
-                    "kl": float(v),
-                })
-            auc_rows.append({
-                "eval_type": "B_cumulative_infections",
-                "algorithm": algo,
-                "scenario_id": scn,
-                "scenario_label": label,
-                "weeks": len(ys),
-                "auc": series_auc(ys),
-            })
-        ax.grid(True, linestyle="--", alpha=0.6); ax.legend(ncol=4, fontsize=8); ax.set_xlim(left=0.9)
-    figB.tight_layout()
-    outB = outdir / "B_vs_cumulative_infections_1xN.png"
-    plt.savefig(outB, dpi=150); print(f"Saved: {outB}")
-    plt.close(figB)
-
-
-    # =================== FIGURE C: rolling infections (1×N) ===================
-    figC, axesC = _axes_for_algos(n_algo)
-    for ax, algo in zip(axesC, algo_list):
-        ax.set_title(f"{algo}: KL vs {args.roll_win_inf}-Week Rolling Infections")
-        ax.set_xlabel("Week"); ax.set_ylabel("KL" if ax is axesC[0] else "")
-        for scn in range(1, 9):
-            ys = _roll_kl_vs(all_weekly_hist[scn][algo], weekly_inf_hist, win=args.roll_win_inf)
-            if not ys: 
-                continue
-            x = list(range(1, len(ys) + 1)); label = SCEN_LABELS[scn]
-            ax.plot(x, ys, marker=marker_map.get(scn, "o"), linestyle="-", label=label)
-            # Panel C: save KL per week (store rolling window separately)
-            for i, v in enumerate(ys, start=1):
-                kl_rows.append({
-                    "run_id": run_id,
-                    "linelist_id": linelist_id,
                     "algorithm": algo,
                     "scenario_id": scn,
                     "scenario_label": label,
-                    "eval_type": "C_rolling_infections",
-                    "roll_window": int(args.roll_win_inf),
-                    "week": i,
-                    "kl": float(v),
-                })
-            auc_rows.append({
-                "eval_type": f"C_rolling_infections_w{args.roll_win_inf}",
-                "algorithm": algo,
-                "scenario_id": scn,
-                "scenario_label": label,
-                "weeks": len(ys),
-                "auc": series_auc(ys),
-            })
-        ax.grid(True, linestyle="--", alpha=0.6); ax.legend(ncol=4, fontsize=8); ax.set_xlim(left=0.9)
-    figC.tight_layout()
-    outC = outdir / f"C_vs_rolling{args.roll_win_inf}_infections_1xN.png"
-    plt.savefig(outC, dpi=150); print(f"Saved: {outC}")
-    plt.close(figC)
+                    "weeks": len(ys),
+                    "auc": series_auc(ys),
+                    })
+            ax.grid(True, linestyle="--", alpha=0.6); ax.legend(ncol=4, fontsize=8); ax.set_xlim(left=0.9)
+        figB.tight_layout()
+        outB = outdir / "B_vs_cumulative_infections_1xN.png"
+        plt.savefig(outB, dpi=150); print(f"Saved: {outB}")
+        plt.close(figB)
 
+        # =================== FIGURE C: rolling infections (1×N) ===================
+        figC, axesC = _axes_for_algos(n_algo)
+        for ax, algo in zip(axesC, algo_list):
+            ax.set_title(f"{algo}: KL vs {args.roll_win_inf}-Week Rolling Infections")
+            ax.set_xlabel("Week"); ax.set_ylabel("KL" if ax is axesC[0] else "")
+            for scn in range(1, 9):
+                ys = _roll_kl_vs(all_weekly_hist[scn][algo], weekly_inf_hist, win=args.roll_win_inf)
+                if not ys:
+                    continue
+                x = list(range(1, len(ys) + 1)); label = SCEN_LABELS[scn]
+                ax.plot(x, ys, marker=marker_map.get(scn, "o"), linestyle="-", label=label)
+                # Panel C: save KL per week (store rolling window separately)
+                for i, v in enumerate(ys, start=1):
+                    kl_rows.append({
+                        "run_id": run_id,
+                        "linelist_id": linelist_id,
+                        "algorithm": algo,
+                        "scenario_id": scn,
+                        "scenario_label": label,
+                        "eval_type": "C_rolling_infections",
+                        "roll_window": int(args.roll_win_inf),
+                        "week": i,
+                        "kl": float(v),
+                        })
+                auc_rows.append({
+                    "eval_type": f"C_rolling_infections_w{args.roll_win_inf}",
+                    "algorithm": algo,
+                    "scenario_id": scn,
+                    "scenario_label": label,
+                    "weeks": len(ys),
+                    "auc": series_auc(ys),
+                    })
+            ax.grid(True, linestyle="--", alpha=0.6); ax.legend(ncol=4, fontsize=8); ax.set_xlim(left=0.9)
+        figC.tight_layout()
+        outC = outdir / f"C_vs_rolling{args.roll_win_inf}_infections_1xN.png"
+        plt.savefig(outC, dpi=150); print(f"Saved: {outC}")
+        plt.close(figC)
+    
+    
+        # =================== FIGURE D: Weekly ratios (3 bars per week) ===================
+        # Definitions:
+        # - pool_size = LineList size in the current week
+        # - infections_size = infections size in the current week
+        # - sampled_per_week = samples actually drawn in the replay (pick one scenario+algorithm)
+        #
+        scenario_for_sampled = 1
+        algo_for_sampled = list(ALGORITHMS.keys())[0]
+        
+        # Build week-wise counts
+        weeks_n = len(weekly_ll_hist)
+        pool_weekly = [int(weekly_ll_hist[i].sum()) for i in range(weeks_n)]
+        inf_weekly  = [int(weekly_inf_hist[i].sum()) for i in range(weeks_n)]
+        
+        # Use the replayed samples we already computed: all_weekly_hist[scenario_id][algo] -> list[Series]
+        sampled_hist_list = all_weekly_hist.get(scenario_for_sampled, {}).get(algo_for_sampled, [])
+        sampled_weekly = [int(s.sum()) if i < len(sampled_hist_list) else 0 for i, s in enumerate(sampled_hist_list + [pd.Series(dtype=float)]*max(0, weeks_n - len(sampled_hist_list)))]
+        
+        # Safe division helpers
+        def _safe_div(num, den):
+            return (num / den) if (den is not None and den != 0) else float("nan")
+        
+        ratio_pool_over_inf     = [_safe_div(pool_weekly[i], inf_weekly[i]) for i in range(weeks_n)]
+        ratio_sampled_over_inf  = [_safe_div(sampled_weekly[i], inf_weekly[i]) for i in range(weeks_n)]
+        ratio_sampled_over_pool = [_safe_div(sampled_weekly[i], pool_weekly[i]) for i in range(weeks_n)]
+        
+        # Plot grouped bars
+        figD, axD = plt.subplots(figsize=(14, 6))
+        x = np.arange(weeks_n) + 1  # week numbers starting at 1
+        bar_w = 0.25
+        axD.bar(x - bar_w, ratio_pool_over_inf,     width=bar_w, label="pool_size / infections_size")
+        axD.bar(x,           ratio_sampled_over_inf, width=bar_w, label="sampled / infections_size")
+        axD.bar(x + bar_w,   ratio_sampled_over_pool,width=bar_w, label="sampled / pool_size")
+        
+        axD.set_title(f"Weekly Ratios (Scenario {scenario_for_sampled}, Algo: {algo_for_sampled})")
+        axD.set_xlabel("Week")
+        axD.set_ylabel("Ratio")
+        axD.set_xlim(0.5, weeks_n + 0.5)
+        axD.grid(True, linestyle="--", alpha=0.6)
+        axD.legend()
+        
+        figD.tight_layout()
+        outD = outdir / "D_weekly_sampling_ratios.png"
+        plt.savefig(outD, dpi=150)
+        print(f"Saved: {outD}")
+        plt.close(figD)
+    else:
+        print("\n--no-plots flag detected. Skipping plot generation.")
 
-    # =================== FIGURE D: Weekly ratios (3 bars per week) ===================
-    # Definitions:
-    # - pool_size = LineList size in the current week
-    # - infections_size = infections size in the current week
-    # - sampled_per_week = samples actually drawn in the replay (pick one scenario+algorithm)
-    #
-    scenario_for_sampled = 1
-    algo_for_sampled = list(ALGORITHMS.keys())[0]
-
-    # Build week-wise counts
-    weeks_n = len(weekly_ll_hist)
-    pool_weekly = [int(weekly_ll_hist[i].sum()) for i in range(weeks_n)]
-    inf_weekly  = [int(weekly_inf_hist[i].sum()) for i in range(weeks_n)]
-
-    # Use the replayed samples we already computed: all_weekly_hist[scenario_id][algo] -> list[Series]
-    sampled_hist_list = all_weekly_hist.get(scenario_for_sampled, {}).get(algo_for_sampled, [])
-    sampled_weekly = [int(s.sum()) if i < len(sampled_hist_list) else 0 for i, s in enumerate(sampled_hist_list + [pd.Series(dtype=float)]*max(0, weeks_n - len(sampled_hist_list)))]
-
-    # Safe division helpers
-    def _safe_div(num, den):
-        return (num / den) if (den is not None and den != 0) else float("nan")
-
-    ratio_pool_over_inf     = [_safe_div(pool_weekly[i], inf_weekly[i]) for i in range(weeks_n)]
-    ratio_sampled_over_inf  = [_safe_div(sampled_weekly[i], inf_weekly[i]) for i in range(weeks_n)]
-    ratio_sampled_over_pool = [_safe_div(sampled_weekly[i], pool_weekly[i]) for i in range(weeks_n)]
-
-    # Plot grouped bars
-    figD, axD = plt.subplots(figsize=(14, 6))
-    x = np.arange(weeks_n) + 1  # week numbers starting at 1
-    bar_w = 0.25
-    axD.bar(x - bar_w, ratio_pool_over_inf,     width=bar_w, label="pool_size / infections_size")
-    axD.bar(x,           ratio_sampled_over_inf, width=bar_w, label="sampled / infections_size")
-    axD.bar(x + bar_w,   ratio_sampled_over_pool,width=bar_w, label="sampled / pool_size")
-
-    axD.set_title(f"Weekly Ratios (Scenario {scenario_for_sampled}, Algo: {algo_for_sampled})")
-    axD.set_xlabel("Week")
-    axD.set_ylabel("Ratio")
-    axD.set_xlim(0.5, weeks_n + 0.5)
-    axD.grid(True, linestyle="--", alpha=0.6)
-    axD.legend()
-
-    figD.tight_layout()
-    outD = outdir / "D_weekly_sampling_ratios.png"
-    plt.savefig(outD, dpi=150)
-    print(f"Saved: {outD}")
-    plt.close(figD)
 
     # ------------------- Save per-week KL series for uncertainty bands -------------------
     kl_df = pd.DataFrame(kl_rows)
