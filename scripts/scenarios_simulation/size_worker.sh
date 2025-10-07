@@ -37,8 +37,8 @@ set -euo pipefail
 REPL="replicate_${REPLICATE_ID}"
 REPDIR="${ROOT_DIR}/${REPL}"
 
-LINELIST_FILE="${REPDIR}/linelist.csv.gz"
-INFECTIONS_FILE="${REPDIR}/linelist_allevents.csv.gz"
+LINELIST_FILE="${REPDIR}/linelist.csv.xz"
+INFECTIONS_FILE="${REPDIR}/linelist_allevents.csv.xz"
 
 # Create a distinct output directory for this specific run
 # Example: .../scenario_runs/replicate_0/batch_750
