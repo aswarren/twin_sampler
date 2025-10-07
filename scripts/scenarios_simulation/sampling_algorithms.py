@@ -171,8 +171,32 @@ def uniform_sampler_with_min_coverage(
     rand = df.sample(take, replace=False, random_state=_rint(rng)) if take > 0 else pd.DataFrame()
     return pd.concat([initial, rand])
 
+# ----------------- samplers -----------------
+# ... keep your existing helpers and samplers ...
+
+def pure_uniform_sampler(
+    line_df: pd.DataFrame,
+    target_dist: pd.Series,        # unused
+    batch_size: int,
+    min_per_group: int,            # unused
+    prior_groups: list[str],       # unused
+    state: dict,                   # unused
+    rng: np.random.Generator,
+) -> pd.DataFrame:
+    """
+    Pure uniform random sampling over the provided pool_df/line_df.
+    Ignores target_dist, min_per_group, prior_groups, and state.
+    No internal replacement; caller controls cross-week no-replacement.
+    """
+    if len(line_df) == 0 or batch_size <= 0:
+        return line_df.iloc[0:0].copy()
+    take = min(batch_size, len(line_df))
+    return line_df.sample(take, replace=False, random_state=_rint(rng)).copy()
+
+
 # mapping used by the driver
 ALGORITHMS = {
+    "Uniform (pure)": pure_uniform_sampler,
     "Uniform Random": lambda df, td, bs, mpg, prior, state, rng: uniform_sampler_with_min_coverage(df, td, bs, mpg, rng),
     "Greedy KL-Divergence": lambda df, td, bs, mpg, prior, state, rng: greedy_kl_sampler(df, td, bs, mpg, prior, rng),
     "RL (Gittins Index)":   lambda df, td, bs, mpg, prior, state, rng: gittins_sampler_with_min_coverage(
