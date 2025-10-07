@@ -54,7 +54,7 @@ if [[ ! -f "${INFECTIONS_FILE}" ]]; then
 fi
 
 # Use a reproducible seed. Tying it to both replicate and batch size makes it unique.
-SEED=$((42 + REPLICATE_ID + BATCH_SIZE))
+SEED=42 #$((42 + REPLICATE_ID + BATCH_SIZE))
 
 echo "--- Worker Details ---"
 echo "  Replicate ID: ${REPLICATE_ID}"
@@ -80,8 +80,6 @@ cmd=(
     "--no-replacement"
     "--seed"
     "${SEED}"
-    "--no-plots"
-    "--save-samples"
 )
 
 # --- Echo and execute the command ---
