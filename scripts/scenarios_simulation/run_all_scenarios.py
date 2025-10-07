@@ -24,7 +24,7 @@ from sampling_algorithms import make_group, kl_dist, ALGORITHMS
 # ----------------- CLI -----------------
 def parse_args():
     ap = argparse.ArgumentParser(
-        description="Run scenarios 1–8; save 3 images (each 1×3). Also outputs AUC rankings. Infections required."
+        description="Run scenarios 1-8; save 3 images (each 1x3). Also outputs AUC rankings. Infections required."
     )
     ap.add_argument("--linelist", required=True, help="Path to simulated_test_positive_linelist.csv")
     ap.add_argument("--population", required=True, help="Path to va_persontrait_epihiper.txt (skiprows=1)")
