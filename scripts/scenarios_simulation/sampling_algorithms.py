@@ -147,32 +147,69 @@ def greedy_kl_sampler(
         final.append(pool.sample(min(cnt, len(pool)), random_state=_rint(rng)))
     return pd.concat(final) if final else pd.DataFrame()
 
+DEFAULT_MIN_COVERAGE_FRAC = 0.05  # 5% default
+
 def uniform_sampler_with_min_coverage(
     line_df: pd.DataFrame,
     target_dist: pd.Series,
     batch_size: int,
-    min_per_group: int,
+    min_per_group,                 # kept for backward compat but ignored unless used as a fraction (0<val<=1)
+    prior_groups: list[str],       # unused
+    state: dict,                   # read min_coverage_frac here if provided by driver
     rng: np.random.Generator,
 ) -> pd.DataFrame:
+    """
+    Uniform sampling with *fractional* minimum coverage per group.
+
+    Behavior:
+      - Determine min_coverage as a FRACTION:
+          1) If state["min_coverage_frac"] is set (0<frac<=1), use that.
+          2) Else if min_per_group is a float in (0,1], treat as fraction (forward compat).
+          3) Else fall back to DEFAULT_MIN_COVERAGE_FRAC (0.05).
+      - For each target group g, sample ceil(frac * count(g)) (capped by available).
+      - Fill any remaining budget with uniform random from the remaining pool.
+
+    Notes:
+      - If the required per-group minimum exceeds the batch_size in aggregate, this
+        function will return more than batch_size rows (same as previous behavior).
+    """
     df = line_df.copy()
+    if len(df) == 0 or batch_size <= 0:
+        return df.iloc[0:0].copy()
+
+    # Resolve fraction
+    frac = None
+    if isinstance(state, dict):
+        frac = state.get("min_coverage_frac", None)
+    if frac is None and isinstance(min_per_group, float) and (0.0 < min_per_group <= 1.0):
+        frac = float(min_per_group)
+    if frac is None:
+        frac = DEFAULT_MIN_COVERAGE_FRAC
+
+    # Work off target groups (as before)
     group_counts = df["group"].value_counts()
     targets = target_dist.index.tolist()
+
     parts = []
     for g in targets:
         if g in group_counts and group_counts[g] > 0:
-            cnt = min(min_per_group, group_counts[g])
-            parts.append(df[df["group"] == g].sample(cnt, random_state=_rint(rng)))
+            need = int(np.ceil(frac * group_counts[g]))
+            if need > 0:
+                take = min(need, group_counts[g])
+                parts.append(df[df["group"] == g].sample(take, random_state=_rint(rng)))
+
     initial = pd.concat(parts) if parts else pd.DataFrame()
-    df = df.drop(initial.index) if not initial.empty else df
+
+    # Fill remainder uniformly
     remaining = batch_size - len(initial)
     if remaining <= 0:
         return initial
-    take = min(remaining, len(df))
-    rand = df.sample(take, replace=False, random_state=_rint(rng)) if take > 0 else pd.DataFrame()
+
+    rest_pool = df.drop(index=initial.index, errors="ignore")
+    take = min(remaining, len(rest_pool))
+    rand = rest_pool.sample(take, replace=False, random_state=_rint(rng)) if take > 0 else pd.DataFrame()
     return pd.concat([initial, rand])
 
-# ----------------- samplers -----------------
-# ... keep your existing helpers and samplers ...
 
 def pure_uniform_sampler(
     line_df: pd.DataFrame,
@@ -197,7 +234,7 @@ def pure_uniform_sampler(
 # mapping used by the driver
 ALGORITHMS = {
     "Uniform (pure)": pure_uniform_sampler,
-    "Uniform Random": lambda df, td, bs, mpg, prior, state, rng: uniform_sampler_with_min_coverage(df, td, bs, mpg, rng),
+    "Uniform Random": uniform_sampler_with_min_coverage,
     "Greedy KL-Divergence": lambda df, td, bs, mpg, prior, state, rng: greedy_kl_sampler(df, td, bs, mpg, prior, rng),
     "RL (Gittins Index)":   lambda df, td, bs, mpg, prior, state, rng: gittins_sampler_with_min_coverage(
         df, td, bs, mpg, state.setdefault("pulls", {}), state.setdefault("rewards", {}), prior, rng

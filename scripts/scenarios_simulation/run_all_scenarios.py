@@ -45,6 +45,8 @@ def parse_args():
                     help="Override scenario batch_cap for all scenarios.")
     ap.add_argument("--min-per-group", type=int,
                     help="Override scenario min_per_group for all scenarios.")
+    ap.add_argument("--min-coverage-frac", type=float,
+                    help="Fractional min coverage per group for the 'Uniform Random' sampler (0<frac<=1). Default: 0.05")
     # Add a flag to disable plots
     ap.add_argument("--no-plots", action="store_true",
                     help="If set, disables the generation of all PNG plot files.")
