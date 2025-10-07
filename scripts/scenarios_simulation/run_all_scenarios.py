@@ -482,6 +482,9 @@ def main():
     weekly_inf_hist = build_weekly_infections(
         args.infections, pop_df, start_date, num_weeks_ref=len(weekly_ll_hist), date_col="date"
     )
+    marker_map = {1:"o", 2:"s", 3:"D", 4:"^", 5:"v", 6:">", 7:"P", 8:"X"}
+    algo_list  = list(ALGORITHMS.keys())
+    n_algo    = len(algo_list)
     if False: #this isn't needed now that all_weekly_hist is populated in the original run
         print("\nReplaying samples for plotting (seeded) …")
         marker_map = {1:"o", 2:"s", 3:"D", 4:"^", 5:"v", 6:">", 7:"P", 8:"X"}
