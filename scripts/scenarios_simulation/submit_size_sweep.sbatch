@@ -12,8 +12,8 @@
 
 # --- Argument Check ---
 if [ "$#" -ne 1 ]; then
-    echo "Usage: sbatch $0 <replicate_id>"
-    echo "Example: sbatch $0 0"
+    echo "Usage: sbatch submit_size_swee.sbatch <replicate_id>"
+    echo "Example: sbatch submit_size_swee.sbatch 0"
     exit 1
 fi
 
