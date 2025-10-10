@@ -187,10 +187,24 @@ def main():
     per_rep_all = pd.concat(per_rep_frames, ignore_index=True)
     summary = summarize_across_replicates(per_rep_all)
 
-    per_rep_all.to_csv(OUT_PER_REP, index=False)
-    summary.to_csv(OUT_SUMMARY, index=False)
+    # --- Determine final output filenames ---
+    if args.county_fips is not None:
+        # If a FIPS filter was used, add it to the output filenames
+        fips = args.county_fips
+        out_per_rep_path = f"ascertainment_per_replicate_fips{fips}.csv"
+        out_summary_path = f"ascertainment_summary_ci_fips{fips}.csv"
+    else:
+        # Otherwise, use the default global filenames
+        out_per_rep_path = OUT_PER_REP
+        out_summary_path = OUT_SUMMARY
 
-    print(f"Skipped broken replicates: {sorted(broken)}")
+    # --- Save final output files ---
+    per_rep_all.to_csv(out_per_rep_path, index=False)
+    summary.to_csv(out_summary_path, index=False)
+
+    print(f"\nSkipped broken replicates: {sorted(broken)}")
+    print(f"\nSaved per-replicate data to: {out_per_rep_path}")
+    print(f"Saved summary data to: {out_summary_path}\n")
     print(summary.head(10).to_string(index=False))
 
 
