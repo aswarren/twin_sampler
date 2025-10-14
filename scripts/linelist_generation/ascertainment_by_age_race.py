@@ -2,6 +2,7 @@
 from pathlib import Path
 import pandas as pd
 import numpy as np
+import argparse
 
 # ---- Config ----
 ROOT = Path("/project/bii_nssac/biocomplexity/c4gc_asw3xp/LineList/asw_test/twin_sampler/scripts/linelist_generation/results")  # point this at the directory containing replicate_* folders
@@ -26,7 +27,7 @@ def read_xz(path: Path, usecols=None):
 def find_replicates(root: Path) -> list[Path]:
     return sorted([p for p in root.glob(REPLICATE_GLOB) if p.is_dir()])
 
-def compute_per_replicate(rep_dir: Path) -> pd.DataFrame:
+def compute_per_replicate(rep_dir: Path, fips_code: int | None = None) -> pd.DataFrame:
     """
     Returns a tidy dataframe with columns:
       replicate, age_group, smh_race, n_infected, n_ascertained, ascertainment
@@ -39,27 +40,40 @@ def compute_per_replicate(rep_dir: Path) -> pd.DataFrame:
             "replicate","age_group","smh_race","n_infected","n_ascertained","ascertainment"
         ])
 
-    # Load minimal columns we need (speed!)
-    usecols = ["age_group", "smh_race", "tested_positive"]
+    # Define the base columns needed for grouping
+    g_vars = ["age_group", "smh_race"]
+    
+    # Determine the full set of columns to load based on whether we are filtering
+    usecols_ll = g_vars + ["tested_positive"]
+    usecols_inf = g_vars
+    if fips_code is not None:
+        usecols_ll.append("county_fips")
+        usecols_inf.append("county_fips")
+
+    # Load data with the necessary columns
     try:
-        ll = read_xz(ll_path, usecols=usecols)
+        ll = read_xz(ll_path, usecols=usecols_ll)
     except ValueError:
-        # If tested_positive is missing in your line list, fall back to assuming
-        # all rows in linelist are ascertained positives.
-        usecols_fallback = ["age_group", "smh_race"]
-        ll = read_xz(ll_path, usecols=usecols_fallback)
+        usecols_ll_fallback = g_vars + (["county_fips"] if fips_code else [])
+        ll = read_xz(ll_path, usecols=usecols_ll_fallback)
         ll["tested_positive"] = 1
+        
+    infections = read_xz(ae_path, usecols=usecols_inf)
+
+    # --- APPLY THE FILTER (if provided) ---
+    if fips_code is not None:
+        ll = ll[ll["county_fips"] == fips_code]
+        infections = infections[infections["county_fips"] == fips_code]
+        
+        # Check if any data remains after filtering
+        if ll.empty and infections.empty:
+            print(f"  - Warning: No data found for FIPS {fips_code} in {rep_dir.name}. Skipping.")
+            return pd.DataFrame()
 
     # Treat ascertained cases as those who tested positive
     ascertained = ll[ll["tested_positive"] == 1]
-
-    # Infections: all rows in allevents represent infections (sim output)
-    # (If your allevents include non-infection events, refine here.)
-    inf_cols = ["age_group", "smh_race"]
-    infections = read_xz(ae_path, usecols=inf_cols)
-
-    # Count by stratum
-    g_vars = ["age_group", "smh_race"]
+    
+    # Count by stratum (g_vars is already defined)
     inf_counts = infections.value_counts(g_vars).rename("n_infected").reset_index()
     asc_counts = ascertained.value_counts(g_vars).rename("n_ascertained").reset_index()
 
@@ -80,50 +94,80 @@ def summarize_across_replicates(per_rep: pd.DataFrame) -> pd.DataFrame:
     """
     Produces summary stats and 95% percentile CI across replicates for each stratum.
     """
-    # Keep track of pooled counts too (can be useful)
-    agg_counts = per_rep.groupby(["age_group", "smh_race"], as_index=False)[["n_infected","n_ascertained"]].sum()
+
+    # --- pooled counts across replicates (for overall rate) ---
+    agg_counts = (
+        per_rep.groupby(["age_group", "smh_race"], as_index=False)[["n_infected", "n_ascertained"]]
+        .sum()
+    )
     agg_counts["ascertainment_pooled"] = np.where(
         agg_counts["n_infected"] > 0,
         agg_counts["n_ascertained"] / agg_counts["n_infected"],
         np.nan
     )
 
-    # Replicate-level CIs (percentile method)
-    def pct_ci(s: pd.Series, alpha=0.05):
-        s = s.dropna()
+    # --- replicate-level statistics (for CI) ---
+    # MODIFICATION 1: The function now accepts a DataFrame `group`
+    def pct_ci(group: pd.DataFrame) -> pd.Series:
+        # We select the column to operate on INSIDE the function
+        s = group["ascertainment"].dropna()
         if len(s) == 0:
-            return pd.Series({"asc_mean": np.nan, "asc_median": np.nan, "asc_p2p5": np.nan, "asc_p97p5": np.nan, "n_reps": 0})
-        return pd.Series({
-            "asc_mean": s.mean(),
-            "asc_median": s.median(),
-            "asc_p2p5": np.quantile(s, 0.025),
-            "asc_p97p5": np.quantile(s, 0.975),
-            "n_reps": s.size
-        })
+            return pd.Series(
+                {"asc_mean": np.nan, "asc_median": np.nan,
+                 "asc_p2p5": np.nan, "asc_p97p5": np.nan, "n_reps": 0}
+            )
+        return pd.Series(
+            {
+                "asc_mean": s.mean(),
+                "asc_median": s.median(),
+                "asc_p2p5": np.quantile(s, 0.025),
+                "asc_p97p5": np.quantile(s, 0.975),
+                "n_reps": len(s)
+            }
+        )
 
+    # MODIFICATION 2: Apply `pct_ci` to the DataFrameGroupBy object
+    # The `["ascertainment"]` part is removed from this chain.
     rep_stats = (
         per_rep
-        .groupby(["age_group","smh_race"])["ascertainment"]
+        .groupby(["age_group", "smh_race"])
         .apply(pct_ci)
         .reset_index()
     )
 
-    out = pd.merge(rep_stats, agg_counts, on=["age_group","smh_race"], how="outer")
+    # --- merge pooled counts and CI summaries ---
+    summary = pd.merge(rep_stats, agg_counts, on=["age_group", "smh_race"], how="outer")
 
-    # Add readable labels
-    out["age_group_label"] = out["age_group"].map(AGE_GROUP_MAP).fillna(out["age_group"])
-    # Arrange columns nicely
+    # --- add readable labels and tidy columns ---
+    summary["age_group_label"] = summary["age_group"].map(AGE_GROUP_MAP).fillna(summary["age_group"])
+
     cols = [
-        "age_group","age_group_label","smh_race",
-        "n_reps",
-        "asc_mean","asc_median","asc_p2p5","asc_p97p5",
-        "n_infected","n_ascertained","ascertainment_pooled"
+        "age_group", "age_group_label", "smh_race", "n_reps",
+        "asc_mean", "asc_median", "asc_p2p5", "asc_p97p5",
+        "n_infected", "n_ascertained", "ascertainment_pooled"
     ]
-    # Keep any that exist (in case of empty data)
-    cols = [c for c in cols if c in out.columns]
-    return out[cols].sort_values(["age_group","smh_race"]).reset_index(drop=True)
+    summary = summary[[c for c in cols if c in summary.columns]].sort_values(
+        ["age_group", "smh_race"]
+    )
+    return summary.reset_index(drop=True)
+
 
 def main():
+
+    parser = argparse.ArgumentParser(
+        description="Calculate ascertainment rates by age and race, with an optional county filter."
+    )
+    parser.add_argument(
+        "--county_fips",
+        type=int,
+        default=None,
+        help="If provided, restricts the calculation to a specific county FIPS code."
+    )
+    args = parser.parse_args()
+    
+    # Announce if a filter is being used
+    if args.county_fips is not None:
+        print(f"--- Restricting analysis to County FIPS: {args.county_fips} ---")
     reps = find_replicates(ROOT)
     # === Skip broken replicates ===
     broken = {4, 11, 19}
@@ -134,7 +178,7 @@ def main():
 
     per_rep_frames = []
     for rep in reps:
-        df_rep = compute_per_replicate(rep)
+        df_rep = compute_per_replicate(rep, fips_code=args.county_fips)
         if not df_rep.empty:
             per_rep_frames.append(df_rep)
 
@@ -144,10 +188,24 @@ def main():
     per_rep_all = pd.concat(per_rep_frames, ignore_index=True)
     summary = summarize_across_replicates(per_rep_all)
 
-    per_rep_all.to_csv(OUT_PER_REP, index=False)
-    summary.to_csv(OUT_SUMMARY, index=False)
+    # --- Determine final output filenames ---
+    if args.county_fips is not None:
+        # If a FIPS filter was used, add it to the output filenames
+        fips = args.county_fips
+        out_per_rep_path = f"ascertainment_per_replicate_fips{fips}.csv"
+        out_summary_path = f"ascertainment_summary_ci_fips{fips}.csv"
+    else:
+        # Otherwise, use the default global filenames
+        out_per_rep_path = OUT_PER_REP
+        out_summary_path = OUT_SUMMARY
 
-    print(f"Skipped broken replicates: {sorted(broken)}")
+    # --- Save final output files ---
+    per_rep_all.to_csv(out_per_rep_path, index=False)
+    summary.to_csv(out_summary_path, index=False)
+
+    print(f"\nSkipped broken replicates: {sorted(broken)}")
+    print(f"\nSaved per-replicate data to: {out_per_rep_path}")
+    print(f"Saved summary data to: {out_summary_path}\n")
     print(summary.head(10).to_string(index=False))
 
 
