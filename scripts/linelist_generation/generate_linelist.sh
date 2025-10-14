@@ -58,20 +58,45 @@ echo "Output will be saved based on: $OUTPUT_FILE"
 echo "" # Add a blank line for readability
 
 
-# Execute the Python script with all the configured parameters
-# NOTE: Corrected --ascertain to --params to match the python script
-python "$PYTHON_SCRIPT" \
-  --epihiper "$EPIHIPER_FILE" \
-  --people "$PERSONTRAIT_FILE" \
-  --households "$HOUSEHOLD_FILE" \
-  --rucc "$RUCC_FILE" \
-  --ascertain "$PARAMS_FILE" \
-  --start_date "$START_DATE" \
-  --start_tick "$START_TICK" \
-  --stop_tick "$STOP_TICK" \
-  --out "$OUTPUT_FILE" \
-  --seed "$SEED" \
-  --prefix_override "$PREFIX_FILTER"\
-  --output_all_events
+cmd=(
+    "python"
+    "${PYTHON_SCRIPT}"
+    "--epihiper"
+    "${EPIHIPER_FILE}"
+    "--people"
+    "${PERSONTRAIT_FILE}"
+    "--households"
+    "${HOUSEHOLD_FILE}"
+    "--rucc"
+    "${RUCC_FILE}"
+    "--ascertain"
+    "${PARAMS_FILE}"
+    "--start_date"
+    "${START_DATE}"
+    "--start_tick"
+    "${START_TICK}"
+    "--stop_tick"
+    "${STOP_TICK}"
+    "--out"
+    "${OUTPUT_FILE}"
+    "--seed"
+    "${SEED}"
+    "--prefix_override"
+    "${PREFIX_FILTER}"
+    "--output_all_events"
+)
+
+# --- Echo the exact command for logging ---
+# The 'printf "%q "' command prints each element of the array with proper quoting,
+# creating a command that can be copied and pasted directly into a terminal to rerun.
+echo "--- EXECUTING COMMAND ---"
+printf "%q " "${cmd[@]}"
+echo # Add a newline for cleaner log output
+echo "---------------------------"
+echo "" # Add another blank line for readability
+
+# --- Execute the command ---
+# The "${cmd[@]}" syntax expands the array safely.
+"${cmd[@]}"
 
 echo "Python script finished for $EPIHIPER_FILE."
