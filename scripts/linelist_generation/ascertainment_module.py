@@ -47,12 +47,49 @@ def preprocess_for_ascertainment(df: pd.DataFrame) -> pd.DataFrame:
     mapped_data = df['exit_state'].apply(_map_abm_state_to_model_inputs)
     df[['symptom_severity', 'age_group_model']] = pd.DataFrame(mapped_data.tolist(), index=df.index)
 
-    # 2. Add placeholder columns if they don't exist in the source data.
-    if 'ses_category' not in df.columns:
-        df['ses_category'] = 'medium' # Assume middle SES if not specified
-    if 'location_type' not in df.columns:
-        df['location_type'] = 'urban' # Assume urban if not specified
+    if 'hh_income' in df.columns:
+        def map_income_to_ses(income):
+            if pd.isna(income):
+                return 'medium' # Default for missing income
+            try:
+                income = float(income)
+                # These thresholds can be tuned, but let's start with something reasonable.
+                if income < 50000:
+                    return 'low'
+                elif income > 125000:
+                    return 'high'
+                else:
+                    return 'medium'
+            except (ValueError, TypeError):
+                return 'medium' # Default for non-numeric income
         
+        df['ses_category'] = df['hh_income'].apply(map_income_to_ses)
+        print("INFO: Created 'ses_category' from 'hh_income' column.")
+    else:
+        # Fallback if hh_income is not even available
+        df['ses_category'] = 'medium'
+    if 'rucc_code' in df.columns:
+        def map_rucc_to_location(rucc):
+            if pd.isna(rucc):
+                return 'urban' # Default for missing RUCC
+            try:
+                rucc = float(rucc)
+                # Using the old model's 3-tier system
+                if rucc <= 3:
+                    return 'urban' # Metro counties
+                # A more granular option could be to add a 'suburban' category
+                elif rucc <= 6:
+                     return 'suburban'
+                else:
+                    return 'rural' # Micropolitan and noncore counties
+            except (ValueError, TypeError):
+                return 'urban' # Default for non-numeric RUCC
+
+        df['location_type'] = df['rucc_code'].apply(map_rucc_to_location)
+        print("INFO: Created 'location_type' from 'rucc_code' column.")
+    else:
+        # Fallback if rucc_code is not available
+        df['location_type'] = 'urban'
     if 'comorbidity_category' not in df.columns:
         if 'has_comorbidities' in df.columns:
             # If the simple boolean exists, map it to the YAML's default categories

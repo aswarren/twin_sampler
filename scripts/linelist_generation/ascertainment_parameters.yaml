@@ -127,8 +127,11 @@ ascertainment_parameters:
         # Justification: Urban areas (defined as metropolitan counties) are assumed to
         # have a greater density of hospitals, clinics, and testing sites, reducing
         # logistical barriers to testing.[9] This is set as the baseline.
+        suburban:
+        multiplier: 0.85 # Slightly lower access/convenience
+        sources: [] 
       rural:
-        multiplier: 0.90
+        multiplier: 0.70
         sources: [9, 10]
         # Justification: Rural areas (micropolitan and noncore counties) generally have
         # fewer healthcare facilities per capita and greater travel distances to care.[9]
