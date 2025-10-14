@@ -101,51 +101,50 @@ def greedy_kl_sampler(
     line_df: pd.DataFrame,
     target_dist: pd.Series,
     batch_size: int,
-    min_per_group: int,
+    min_per_group: int,      # kept for compatibility, ignored
     prior_groups: list[str],
     rng: np.random.Generator,
 ) -> pd.DataFrame:
-    picked = []
+    """
+    Greedy KL-divergence sampler.
+
+    Iteratively chooses the group that minimizes the KL divergence
+    between the empirical group distribution (prior + current batch)
+    and the target distribution.
+    """
     df = line_df.copy()
     group_counts = df["group"].value_counts().to_dict()
-    targets = target_dist.index.tolist()
+    picked = []
 
-    parts = []
-    for g in targets:
-        if g in group_counts and group_counts[g] > 0:
-            cnt = min(min_per_group, group_counts[g])
-            take = df[df["group"] == g].sample(cnt, random_state=_rint(rng))
-            parts.append(take)
-            picked.extend([g] * cnt)
-            group_counts[g] -= cnt
-
-    remaining = batch_size - len(picked)
-    if remaining <= 0:
-        return pd.concat(parts) if parts else pd.DataFrame()
-
-    for _ in range(remaining):
+    for _ in range(batch_size):
         best_g, best_kl = None, float("inf")
+
         for g, c in group_counts.items():
             if c <= 0:
                 continue
+
             trial = prior_groups + picked + [g]
             p = pd.Series(trial).value_counts(normalize=True).reindex(target_dist.index, fill_value=0.0)
             q = target_dist.reindex(p.index)
             kl = kl_dist(p + 1e-9, q + 1e-9)
+
             if kl < best_kl:
                 best_kl, best_g = kl, g
-        if best_g:
-            picked.append(best_g)
-            group_counts[best_g] -= 1
-        else:
-            break
 
+        if best_g is None:
+            break  # no more available groups
+        picked.append(best_g)
+        group_counts[best_g] -= 1
+
+    # Materialize actual rows for each chosen group
     counts = pd.Series(picked).value_counts()
-    final = []
+    parts = []
     for g, cnt in counts.items():
         pool = df[df["group"] == g]
-        final.append(pool.sample(min(cnt, len(pool)), random_state=_rint(rng)))
-    return pd.concat(final) if final else pd.DataFrame()
+        parts.append(pool.sample(min(cnt, len(pool)), random_state=_rint(rng)))
+
+    return pd.concat(parts) if parts else pd.DataFrame()
+
 
 DEFAULT_MIN_COVERAGE_FRAC = 0.05  # 5% default
 
@@ -234,9 +233,9 @@ def pure_uniform_sampler(
 # mapping used by the driver
 ALGORITHMS = {
     "Uniform (pure)": pure_uniform_sampler,
-    "Uniform Random": uniform_sampler_with_min_coverage,
+    #"Uniform Random": uniform_sampler_with_min_coverage,
     "Greedy KL-Divergence": lambda df, td, bs, mpg, prior, state, rng: greedy_kl_sampler(df, td, bs, mpg, prior, rng),
-    "RL (Gittins Index)":   lambda df, td, bs, mpg, prior, state, rng: gittins_sampler_with_min_coverage(
-        df, td, bs, mpg, state.setdefault("pulls", {}), state.setdefault("rewards", {}), prior, rng
-    ),
+    #"RL (Gittins Index)":   lambda df, td, bs, mpg, prior, state, rng: gittins_sampler_with_min_coverage(
+    #    df, td, bs, mpg, state.setdefault("pulls", {}), state.setdefault("rewards", {}), prior, rng
+    #),
 }
