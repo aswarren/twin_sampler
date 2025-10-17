@@ -99,7 +99,7 @@ ascertainment_parameters:
       # SES acts as a proxy for access to healthcare, health insurance, and the ability
       # to seek care without economic hardship, which directly impacts testing behavior.
       high:
-        multiplier: 1.10
+        multiplier: 2.10
         sources: [7, 8]
         # Justification: Higher SES is associated with better health insurance coverage
         # and greater access to primary care, which facilitates seeking a diagnosis
@@ -110,7 +110,7 @@ ascertainment_parameters:
         sources: [8]
         # Justification: Serves as the baseline reference group.
       low:
-        multiplier: 0.85
+        multiplier: 0.45
         sources: [7, 8]
         # Justification: Lower SES is associated with systemic barriers to care, including
         # lack of health insurance and inability to take paid sick leave, which can deter
