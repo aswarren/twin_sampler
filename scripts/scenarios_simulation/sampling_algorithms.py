@@ -25,77 +25,88 @@ def _rint(rng: np.random.Generator) -> int:
     return int(rng.integers(0, 2**32 - 1, dtype=np.uint32))
 
 # ----------------- samplers -----------------
-def reward_function(group, all_groups, target_dist):
+def reward_function(group, all_groups, target_dist, eps=1e-9):
     current = pd.Series(all_groups).value_counts(normalize=True)
-    curr = current.get(group, 1e-6)
-    targ = target_dist.get(group, 1e-6)
+    curr = max(current.get(group, eps), eps)
+    targ = max(target_dist.get(group, eps), eps)
     return -np.log(curr / targ)
 
-def gittins_sampler_with_min_coverage(
+def gittins_ucb_sampler(
     line_df: pd.DataFrame,
     target_dist: pd.Series,
     batch_size: int,
-    min_per_group: int,
-    pulls: dict,
-    rewards: dict,
+    min_per_group: int,             # kept for compatibility, ignored
+    pulls: dict[str, int],
+    rewards: dict[str, float],
     prior_groups: list[str],
     rng: np.random.Generator,
 ) -> pd.DataFrame:
-    sampled_groups = []
+    """
+    UCB1-style bandit:
+        G_g = mu_g + sqrt( 2 * log(sum_h pulls[h] + 1) / (pulls[g] + 1) )
+    where mu_g = rewards[g] / max(1, pulls[g]).
+    - No min-coverage bootstrap.
+    - Samples without replacement.
+    - Respects `batch_size`.
+    """
+    if batch_size <= 0 or line_df.empty:
+        return line_df.iloc[0:0].copy()
+
     df = line_df.copy()
-    group_counts = df["group"].value_counts()
-    avail = group_counts.index.tolist()
+    group_counts = df["group"].value_counts().to_dict()
+    sampled_groups: list[str] = []
+    used_idx = pd.Index([])
 
-    # min coverage
-    parts = []
-    for g in target_dist.index:
-        if g in group_counts and group_counts[g] > 0:
-            cnt = min(min_per_group, group_counts[g])
-            take = df[df["group"] == g].sample(cnt, random_state=_rint(rng))
-            parts.append(take)
-            sampled_groups.extend([g] * cnt)
-            group_counts[g] -= cnt
+    for _ in range(batch_size):
+        # Compute UCB index per available group
+        total_pulls = int(sum(pulls.values()))
+        best_score = -np.inf
+        best_groups: list[str] = []
 
-    remaining = batch_size - len(sampled_groups)
-    if remaining <= 0:
-        return pd.concat(parts) if parts else pd.DataFrame()
+        for g, c in group_counts.items():
+            if c <= 0:
+                continue
+            p_g = int(pulls.get(g, 0))
+            r_g = float(rewards.get(g, 0.0))
 
-    # credit initial picks
-    for g in sampled_groups:
-        pulls[g]   = pulls.get(g, 0) + 1
-        rewards[g] = rewards.get(g, 0.0) + reward_function(g, prior_groups + sampled_groups, target_dist)
+            mu = r_g / (p_g if p_g > 0 else 1.0)  # mean reward
+            explore = np.sqrt(2.0 * np.log(total_pulls + 1.0) / (p_g + 1.0))  # your formula
+            score = mu + explore
 
-    # continue with index logic
-    for _ in range(remaining):
-        best_g, best_idx = None, -np.inf
-        current_rolling = pd.Series(prior_groups + sampled_groups).value_counts(normalize=True)
-        total_pulls = sum(pulls.values())
-        for g in avail:
-            if group_counts.get(g, 0) > 0:
-                mean_r = rewards.get(g, 0.0) / max(1, pulls.get(g, 1))
-                explore = np.sqrt(np.log(total_pulls + 1) / (pulls.get(g, 0) + 1))
-                curr = current_rolling.get(g, 1e-6)
-                targ = target_dist.get(g, 1e-6)
-                under = np.log(1 + (targ / (curr + 1e-6)))
-                score = mean_r + explore + under
-                if score > best_idx:
-                    best_idx, best_g = score, g
-        if best_g:
-            sampled_groups.append(best_g)
-            pulls[best_g]   = pulls.get(best_g, 0) + 1
-            rewards[best_g] = rewards.get(best_g, 0.0) + reward_function(best_g, prior_groups + sampled_groups, target_dist)
-            group_counts[best_g] -= 1
+            if score > best_score + 1e-9:
+                best_score = score
+                best_groups = [g]
+            elif abs(score - best_score) <= 1e-9:
+                best_groups.append(g)
 
-    # materialize rows
-    counts = pd.Series(sampled_groups).value_counts()
-    final = [d for d in parts]
-    for g, cnt in counts.items():
-        init_cnt = sum(len(d[d["group"] == g]) for d in parts) if parts else 0
-        need = cnt - init_cnt
-        if need > 0:
-            pool = df[df["group"] == g]
-            final.append(pool.sample(min(need, len(pool)), random_state=_rint(rng)))
-    return pd.concat(final) if final else pd.DataFrame()
+        if not best_groups:
+            break
+
+        # Tie-break uniformly at random among best groups
+        best_g = rng.choice(np.array(best_groups, dtype=object))
+
+        # Draw ONE row from the chosen group without replacement
+        pool_g = df[df["group"] == best_g].drop(index=used_idx, errors="ignore")
+        if pool_g.empty:
+            group_counts[best_g] = 0
+            continue
+
+        take = pool_g.sample(1, replace=False, random_state=_rint(rng))
+        used_idx = used_idx.union(take.index)
+
+        # Update bandit stats with shaped reward
+        sampled_groups.append(best_g)
+        pulls[best_g]   = pulls.get(best_g, 0) + 1
+        rewards[best_g] = rewards.get(best_g, 0.0) + reward_function(
+            best_g, prior_groups + sampled_groups, target_dist
+        )
+
+        group_counts[best_g] -= 1
+        if group_counts[best_g] < 0:
+            group_counts[best_g] = 0
+
+    return df.loc[used_idx].copy()
+
 
 def greedy_kl_sampler(
     line_df: pd.DataFrame,
@@ -235,7 +246,7 @@ ALGORITHMS = {
     "Uniform (pure)": pure_uniform_sampler,
     #"Uniform Random": uniform_sampler_with_min_coverage,
     "Greedy KL-Divergence": lambda df, td, bs, mpg, prior, state, rng: greedy_kl_sampler(df, td, bs, mpg, prior, rng),
-    #"RL (Gittins Index)":   lambda df, td, bs, mpg, prior, state, rng: gittins_sampler_with_min_coverage(
-    #    df, td, bs, mpg, state.setdefault("pulls", {}), state.setdefault("rewards", {}), prior, rng
-    #),
+    "RL (UCB)":   lambda df, td, bs, mpg, prior, state, rng: gittins_ucb_sampler(
+    df, td, bs, mpg, state.setdefault("pulls", {}), state.setdefault("rewards", {}), prior, rng
+    ),
 }
