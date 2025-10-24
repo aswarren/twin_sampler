@@ -135,9 +135,14 @@ def greedy_kl_sampler(
                 continue
 
             trial = prior_groups + picked + [g]
-            p = pd.Series(trial).value_counts(normalize=True).reindex(target_dist.index, fill_value=0.0)
-            q = target_dist.reindex(p.index)
+            p = (
+                pd.Series(trial)
+                .value_counts(normalize=True)
+                .reindex(target_dist.index, fill_value=0.0)
+            )
+            q = target_dist.reindex(p.index).fillna(0.0)  # <-- ensure no NaNs
             kl = kl_dist(p + 1e-9, q + 1e-9)
+
 
             if kl < best_kl:
                 best_kl, best_g = kl, g
@@ -241,12 +246,162 @@ def pure_uniform_sampler(
     return line_df.sample(take, replace=False, random_state=_rint(rng)).copy()
 
 
+def stratified_proportional_sampler(
+    line_df: pd.DataFrame,
+    target_dist: pd.Series,
+    batch_size: int,
+    min_per_group: int,            # unused (kept for compatibility)
+    prior_groups: list[str],       # unused
+    state: dict,                   # optional flags (see below)
+    rng: np.random.Generator,
+) -> pd.DataFrame:
+    """
+    Stratified sampling proportional to target distribution.
+
+    Steps
+    -----
+    1) Keep only groups present in `line_df` (availability > 0).
+    2) Normalize target probabilities across present groups.
+    3) Compute ideal allocations = p * batch_size.
+    4) Use largest-remainder (Hamilton) rounding to make integer allocations.
+    5) Enforce availability caps; redistribute any leftover to groups that still
+       have availability, favoring larger remainders.
+    6) Sample without replacement per group.
+    7) If still short of `batch_size`:
+         - If state.get("fill_from_nontarget", True) is True, fill uniformly
+           from remaining non-target groups, else return the stratified part.
+
+    Options in `state`
+    ------------------
+    - fill_from_nontarget: bool (default True)
+         Whether to fill any remaining budget from groups not in target_dist.
+    - renormalize_to_available: bool (default True)
+         If some target groups are absent, renormalize target probs over the
+         present ones. If False, their mass is discarded and total may be < batch_size.
+    """
+    df = line_df.copy()
+    if df.empty or batch_size <= 0:
+        return df.iloc[0:0].copy()
+
+    state = state or {}
+    fill_from_nontarget = bool(state.get("fill_from_nontarget", True))
+    renorm = bool(state.get("renormalize_to_available", True))
+
+    # Availability by group in the pool
+    avail = df["group"].value_counts().astype(int)
+
+    # Focus on target groups; intersect with available groups
+    target_dist = target_dist.copy()
+    target_dist = target_dist[target_dist > 0]  # drop zero-mass groups
+    target_groups_present = target_dist.index.intersection(avail.index)
+
+    if len(target_groups_present) == 0:
+        # No target groups available; fall back to uniform fill
+        take = min(batch_size, len(df))
+        return df.sample(take, replace=False, random_state=_rint(rng)).copy()
+
+    td = target_dist.loc[target_groups_present].astype(float)
+
+    # Normalize over available target groups (recommended)
+    total_mass = td.sum()
+    if total_mass <= 0:
+        # degenerate; fallback to uniform over available target groups
+        p = pd.Series(1.0, index=td.index) / len(td)
+    else:
+        p = td / total_mass if renorm else (td / td.sum())
+
+    # Ideal fractional allocations
+    ideal = p * batch_size
+
+    # Integer floors and remainders
+    base_alloc = np.floor(ideal).astype(int)
+    remainders = (ideal - base_alloc).astype(float)
+
+    # Enforce availability caps immediately
+    caps = avail.loc[base_alloc.index]
+    base_alloc = base_alloc.clip(upper=caps)
+
+    # Total we can request overall is limited by total availability of target groups
+    target_total_cap = int(caps.sum())
+    desired_total = min(int(batch_size), target_total_cap)
+
+    # How many more we need to assign among target groups
+    remaining = desired_total - int(base_alloc.sum())
+    if remaining > 0:
+        # Largest-remainder with caps:
+        # Sort groups by remainder descending; break ties randomly with rng
+        # We'll cycle through until remaining is 0 or no capacity left.
+        order = remainders.sort_values(ascending=False)
+        if len(order) > 1:
+            # stable random tie-break: shuffle indices with same remainder
+            # create a tiny random jitter to remainders using rng
+            jitter = pd.Series(rng.random(len(order)), index=order.index) * 1e-12
+            order = (order + jitter).sort_values(ascending=False)
+
+        alloc = base_alloc.copy()
+        idx_cycle = list(order.index)
+
+        # Assign one by one (budget sizes are typically manageable)
+        i = 0
+        while remaining > 0 and len(idx_cycle) > 0:
+            g = idx_cycle[i % len(idx_cycle)]
+            if alloc[g] < caps[g]:
+                alloc[g] += 1
+                remaining -= 1
+            # Move to next
+            i += 1
+            # Stop if no groups have capacity left
+            if all(alloc[h] >= caps[h] for h in idx_cycle):
+                break
+    else:
+        alloc = base_alloc
+
+    # Materialize per-group samples for target groups
+    parts = []
+    for g, k in alloc.items():
+        if k <= 0:
+            continue
+        pool_g = df[df["group"] == g]
+        if len(pool_g) == 0:
+            continue
+        take = min(k, len(pool_g))
+        parts.append(pool_g.sample(take, replace=False, random_state=_rint(rng)))
+
+    taken_df = pd.concat(parts) if parts else pd.DataFrame()
+
+    # If we’re still short and allowed, fill from non-target groups uniformly
+    shortfall = batch_size - len(taken_df)
+    if shortfall > 0 and fill_from_nontarget:
+        remaining_pool = df.drop(index=taken_df.index, errors="ignore")
+        if not remaining_pool.empty:
+            # Prefer groups not in target first; if not enough, take from any
+            non_target_pool = remaining_pool[~remaining_pool["group"].isin(p.index)]
+            if len(non_target_pool) >= shortfall:
+                filler = non_target_pool.sample(shortfall, replace=False, random_state=_rint(rng))
+            else:
+                # take all non-target, then top-up from the remainder
+                parts_fill = []
+                if len(non_target_pool) > 0:
+                    parts_fill.append(non_target_pool.sample(len(non_target_pool), replace=False, random_state=_rint(rng)))
+                still = shortfall - sum(len(x) for x in parts_fill) if parts_fill else shortfall
+                if still > 0:
+                    rest = remaining_pool.drop(index=(pd.concat(parts_fill).index if parts_fill else []), errors="ignore")
+                    if len(rest) > 0:
+                        parts_fill.append(rest.sample(min(still, len(rest)), replace=False, random_state=_rint(rng)))
+                filler = pd.concat(parts_fill) if parts_fill else pd.DataFrame()
+            taken_df = pd.concat([taken_df, filler]) if not filler.empty else taken_df
+
+    # Return whatever we could get (may be < batch_size if availability is limited and no fill)
+    return taken_df.reset_index(drop=True)
+
+
 # mapping used by the driver
 ALGORITHMS = {
-    "Uniform (pure)": pure_uniform_sampler,
-    #"Uniform Random": uniform_sampler_with_min_coverage,
-    "Greedy KL-Divergence": lambda df, td, bs, mpg, prior, state, rng: greedy_kl_sampler(df, td, bs, mpg, prior, rng),
-    "RL (UCB)":   lambda df, td, bs, mpg, prior, state, rng: gittins_ucb_sampler(
+    "SURS": pure_uniform_sampler,
+    "Uniform Random": uniform_sampler_with_min_coverage,
+    "Greedy": lambda df, td, bs, mpg, prior, state, rng: greedy_kl_sampler(df, td, bs, mpg, prior, rng),
+    "Stratified": stratified_proportional_sampler,
+    "RL":   lambda df, td, bs, mpg, prior, state, rng: gittins_ucb_sampler(
     df, td, bs, mpg, state.setdefault("pulls", {}), state.setdefault("rewards", {}), prior, rng
     ),
 }
