@@ -363,6 +363,9 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
         t0 = time.perf_counter()
         state = {}
 
+        if algo_name == "SURS":
+            state["base_seed"] = overrides.get("base_seed", 0)
+
         # For no-replacement: track used base indices (from line_df) per algorithm
         used_idx: set[int] = set()
 
