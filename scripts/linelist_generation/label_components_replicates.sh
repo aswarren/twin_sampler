@@ -21,7 +21,7 @@ BASE_OUTPUT_DIR="/project/bii_nssac/biocomplexity/c4gc_asw3xp/LineList/asw_test/
 
 # The path to the importation schedule CSV file.
 # This file is STATIC and used by all replicates.
-SCHEDULE_FILE="/path/to/your/Virginia_schedule.csv" # <-- IMPORTANT: SET THIS PATH
+SCHEDULE_FILE="/project/bii_nssac/biocomplexity/c4gc_asw3xp/LineList/asw_test/twin_sampler/Data/Virginia_importation_schedule.csv" # <-- IMPORTANT: SET THIS PATH
 
 # The path to your worker script
 WORKER_SCRIPT="./run_label_components.sh"
