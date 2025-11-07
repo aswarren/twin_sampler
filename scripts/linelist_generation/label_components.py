@@ -1,5 +1,11 @@
+import argparse
+import pandas as pd
+import numpy as np
+import networkx as nx
+from scipy.optimize import linear_sum_assignment
+from sklearn.preprocessing import minmax_scale
 
-
+# --- Graph and Component Functions (from original script) ---
 def create_graph_classic(infection_events_df):
     # Ensure PIDs are converted to float IDs using the tick value
     if not infection_events_df.empty:
@@ -48,7 +54,7 @@ def create_graph_classic(infection_events_df):
 
 
 def create_component_table(infection_df):
-    G_full=create_graph_classic(infection_df)
+    G_full = create_graph_classic(infection_df)
     full_cascade_components = list(nx.weakly_connected_components(G_full))
     #create table with pid, tick, component_id
     component_data = []
@@ -58,26 +64,170 @@ def create_component_table(infection_df):
     component_df = pd.DataFrame(component_data)
     return component_df
 
+# --- New Variant Labeling Logic ---
 
+def mode1_temporal_match(sim_components, real_imports):
+    """Assigns variants by finding the closest real importation in time."""
+    print("  Applying Mode 1: Temporal & Proportional Matching...")
+    if real_imports.empty or sim_components.empty:
+        return {}
 
-#process the epihiper components 
-#variant_labels=[v1,v2,v3,v4,v5,v6,v7,v8,v9,v10]
-def create_variant_labels(epihiper_df, variant_labels):
-    #filter epihiper_df to exit_state that starts with 'E'
-    infection_df = epihiper_df[epihiper_df['exit_state'].str.startswith('E')]
-    component_df=create_component_table(infection_df)
-    #merge with infection_df on alias_pid
+    # Sort both by tick
+    sim_components = sim_components.sort_values('first_tick').reset_index(drop=True)
+    real_imports = real_imports.sort_values('tick').reset_index(drop=True)
+    
+    assignments = {}
+    real_imports_used = [False] * len(real_imports)
+    
+    # For each simulated component, find the best available real import
+    for sim_idx, sim_row in sim_components.iterrows():
+        best_real_idx = -1
+        min_dist = float('inf')
+        
+        # Find the closest *unused* real import
+        for real_idx, real_row in real_imports.iterrows():
+            if not real_imports_used[real_idx]:
+                dist = abs(sim_row['first_tick'] - real_row['tick'])
+                if dist < min_dist:
+                    min_dist = dist
+                    best_real_idx = real_idx
+        
+        if best_real_idx != -1:
+            assignments[sim_row['component_id']] = real_imports.loc[best_real_idx, 'variant']
+            real_imports_used[best_real_idx] = True # Mark as used
+            
+    return assignments
+
+def mode2_bipartite_match(sim_components, real_imports, time_weight=0.5):
+    """Assigns variants using optimized bipartite matching on time and size."""
+    print(f"  Applying Mode 2: Bipartite Matching (time_weight={time_weight})...")
+    if real_imports.empty or sim_components.empty:
+        return {}
+
+    # Normalize size columns for fair comparison in cost function
+    sim_components['norm_size'] = minmax_scale(sim_components['component_size'])
+    real_imports['norm_size'] = minmax_scale(real_imports['sample_count'])
+    
+    # Create the cost matrix
+    cost_matrix = np.zeros((len(sim_components), len(real_imports)))
+    
+    for i, sim_row in sim_components.iterrows():
+        for j, real_row in real_imports.iterrows():
+            time_cost = abs(sim_row['first_tick'] - real_row['tick'])
+            size_cost = abs(sim_row['norm_size'] - real_row['norm_size'])
+            # We need to normalize time_cost as well
+            # A simple way is to divide by the max possible time difference
+            max_time_diff = max(sim_components['first_tick'].max(), real_imports['tick'].max())
+            norm_time_cost = time_cost / max_time_diff if max_time_diff > 0 else 0
+            
+            cost_matrix[i, j] = (time_weight * norm_time_cost) + ((1 - time_weight) * size_cost)
+            
+    # Solve the assignment problem
+    sim_indices, real_indices = linear_sum_assignment(cost_matrix)
+    
+    # Create the assignment map {component_id: variant}
+    assignments = {}
+    for i, j in zip(sim_indices, real_indices):
+        component_id = sim_components.iloc[i]['component_id']
+        variant = real_imports.iloc[j]['variant']
+        assignments[component_id] = variant
+        
+    return assignments
+
+def create_variant_labels(epihiper_df, schedule_df, mode):
+    """
+    Processes epihiper simulation, identifies components, and assigns variant labels
+    based on a real-world importation schedule.
+    """
+    print("Step 1: Identifying infection events and transmission components in simulation...")
+    # Filter for infection events
+    infection_df = epihiper_df[epihiper_df['exit_state'].str.startswith('E')].copy()
+    
+    # Create graph and get component IDs
+    component_df = create_component_table(infection_df)
+    
+    # Merge component IDs back into the infection data
     merged_df = pd.merge(infection_df, component_df, on='alias_pid', how='left')
-    #now I need to apply the component_id to all events that apply to the pid until the next infection event for that pid
-    #sort by pid and tick
-    merged_df = merged_df.sort_values(by=['pid', 'tick'])
-    #forward fill component_id for each pid
-    merged_df['component_id'] = merged_df.groupby('pid')['component_id'].ffill
-    #sort by tick
-    merged_df = merged_df.sort_values(by='tick')
-    #create variant label as "variant_{component_id}_{first_tick_in_component}"
-    first_ticks = merged_df.groupby('component_id')['tick'].min().reset_index()
-    first_ticks = first_ticks.rename(columns={'tick': 'first_tick'})
-    merged_df = pd.merge(merged_df, first_ticks, on='component_id', how='left')
-    merged_df['variant_label'] = 'variant_' + merged_df['component_id'].astype(str) + '_' + merged_df['first_tick'].astype(str)
-    return merged_df
+    
+    # Get component properties: first tick and size
+    component_summary = merged_df.groupby('component_id').agg(
+        first_tick=('tick', 'min'),
+        component_size=('pid', 'nunique') # Size is the number of unique people in the component
+    ).reset_index()
+    print(f"Found {len(component_summary)} unique transmission components in the simulation.")
+
+    # --- Prepare Real-World Importation Data ---
+    print("Step 2: Preparing real-world importation schedule...")
+    # "Unroll" the schedule from the clusters column
+    real_imports_list = []
+    for _, row in schedule_df.iterrows():
+        num_clusters = row['clusters']
+        avg_sample_count = row['sample_count'] / num_clusters if num_clusters > 0 else 0
+        for _ in range(num_clusters):
+            real_imports_list.append({
+                'tick': row['tick'],
+                'variant': row['variant'],
+                'sample_count': avg_sample_count
+            })
+    real_imports_df = pd.DataFrame(real_imports_list)
+    print(f"Unrolled schedule into {len(real_imports_df)} individual importation events.")
+
+    # --- Assign Variants based on Mode ---
+    print(f"Step 3: Assigning variants to components using Mode {mode}...")
+    assignment_map = {}
+    if mode == 1:
+        assignment_map = mode1_temporal_match(component_summary, real_imports_df)
+    elif mode == 2:
+        assignment_map = mode2_bipartite_match(component_summary, real_imports_df)
+    
+    if not assignment_map:
+        print("Warning: No variant assignments were made. Components will not be labeled.")
+        merged_df['variant_label'] = 'unassigned'
+        return merged_df
+
+    # --- Apply Labels ---
+    print("Step 4: Applying variant labels to the full simulation dataframe...")
+    # Map the assigned variants to the component summary
+    component_summary['variant_label'] = component_summary['component_id'].map(assignment_map)
+    # Fill any unassigned components (if sim has more components than real imports)
+    component_summary['variant_label'].fillna('unassigned', inplace=True)
+    
+    # Merge the final labels into the full infection dataframe
+    final_df = pd.merge(merged_df, component_summary[['component_id', 'variant_label']], on='component_id', how='left')
+    
+    # The original script propagated component_id. We can do the same with variant_label.
+    # First, link variant_label to every event in the full epihiper_df via pid
+    pid_to_label = final_df.set_index('pid')['variant_label'].to_dict()
+    epihiper_df['variant_label'] = epihiper_df['pid'].map(pid_to_label)
+    
+    # Forward fill the labels for each person's timeline
+    epihiper_df.sort_values(['pid', 'tick'], inplace=True)
+    epihiper_df['variant_label'] = epihiper_df.groupby('pid')['variant_label'].ffill()
+    epihiper_df['variant_label'].fillna('background', inplace=True) # Label non-infected people
+
+    return epihiper_df
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Label epihiper simulation components with variants from a real-world schedule.")
+    parser.add_argument("--epihiper_input", required=True, type=str, help="Path to the epihiper simulation output CSV file.")
+    parser.add_argument("--schedule_input", required=True, type=str, help="Path to the importation schedule CSV file (generated by seed_seq_prep.py).")
+    parser.add_argument("--output", required=True, type=str, help="Path for the output CSV file with variant labels.")
+    parser.add_argument("--mode", required=True, type=int, choices=[1, 2], help="Labeling mode: 1 (Temporal/Proportional) or 2 (Bipartite Time & Size).")
+    
+    args = parser.parse_args()
+
+    print(f"Loading epihiper data from: {args.epihiper_input}")
+    epi_df = pd.read_csv(args.epihiper_input)
+    
+    print(f"Loading schedule data from: {args.schedule_input}")
+    sched_df = pd.read_csv(args.schedule_input)
+    
+    # Call the main function
+    labeled_df = create_variant_labels(epi_df, sched_df, args.mode)
+    
+    print(f"Saving labeled data to: {args.output}")
+    labeled_df.to_csv(args.output, index=False)
+    
+    print("Script finished.")
+    print("\nVariant Label Distribution in Output:")
+    print(labeled_df['variant_label'].value_counts())
