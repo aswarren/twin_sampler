@@ -28,4 +28,6 @@ python3 run_all_scenarios.py \
   --outdir ./result \
   --batch-size 1000 \
   --no-replacement \
-  --seed 42
+  --seed 42 \
+  --algorithms "surs", "greedy", "stratified" \
+  --stratifiers "age", "race", "county", "sex"
