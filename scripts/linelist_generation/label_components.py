@@ -226,7 +226,10 @@ if __name__ == "__main__":
     labeled_df = create_variant_labels(epi_df, sched_df, args.mode)
     
     print(f"Saving labeled data to: {args.output}")
-    labeled_df.to_csv(args.output, index=False)
+    #if the output file name doesn't end  with .gz add it
+    if not args.output.endswith('.gz'):
+        args.output += '.gz'
+    labeled_df.to_csv(args.output, index=False, compression='gzip')
     
     print("Script finished.")
     print("\nVariant Label Distribution in Output:")
