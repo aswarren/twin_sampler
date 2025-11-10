@@ -18,6 +18,7 @@ BASE_INPUT_DIR="/project/bii_nssac/epihiper-simulations/pipeline-jc/run/20250120
 
 # The base directory where all output will be saved
 BASE_OUTPUT_DIR="/project/bii_nssac/biocomplexity/c4gc_asw3xp/LineList/asw_test/twin_sampler/scripts/linelist_generation/results"
+SCHEDULE_FILE="/path/to/your/Virginia_schedule.csv"
 
 # The path to your worker script
 WORKER_SCRIPT="./generate_linelist.sh"
@@ -45,7 +46,11 @@ mkdir -p "$OUTPUT_REPLICATE_DIR"
 
 # 4. Check if the input file exists before launching the worker
 if [ ! -f "$EPIHIPER_FILE" ]; then
-  echo "Error: Input file not found for replicate ${SLURM_ARRAY_TASK_ID}: $EPIHIPER_FILE"
+  echo "Error: Input EpiHiper file not found for replicate ${SLURM_ARRAY_TASK_ID}: $EPIHIPER_FILE"
+  exit 1
+fi
+if [ ! -f "$SCHEDULE_FILE" ]; then
+  echo "Error: Static schedule file not found: $SCHEDULE_FILE"
   exit 1
 fi
 
@@ -54,6 +59,6 @@ echo "Starting worker for replicate ${SLURM_ARRAY_TASK_ID}"
 echo "Input file: $EPIHIPER_FILE"
 echo "Output base path: $OUTPUT_FILE"
 
-bash "$WORKER_SCRIPT" "$EPIHIPER_FILE" "$OUTPUT_FILE"
+bash "$WORKER_SCRIPT" "$EPIHIPER_FILE" "$SCHEDULE_FILE" "$OUTPUT_BASE_PATH"
 
 echo "Worker script finished for replicate ${SLURM_ARRAY_TASK_ID}"

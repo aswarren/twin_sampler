@@ -31,6 +31,16 @@ preprocess_for_ascertainment,
 compute_ascertainment_probability
 )
 
+try:
+    # Assuming label_components.py is in the same directory or accessible via PYTHONPATH
+    from label_components import create_variant_labels
+    LABEL_COMPONENTS_AVAILABLE = True
+    print("Successfully imported variant labeling functions from label_components.py")
+except ImportError as e:
+    print(f"Warning: Could not import from label_components.py: {e}")
+    print("Variant labeling functionality will be disabled.")
+    LABEL_COMPONENTS_AVAILABLE = False
+
 def process_epihiper(
     epihiper_path: str,
     persontrait_path: str,
@@ -52,23 +62,23 @@ def process_epihiper(
 
     # 1. Load all required data files
     print(f"Loading EpiHiper data from {epihiper_path}...")
+    # The epi_df passed to this function is now pre-loaded and potentially pre-labeled
     epi_df = pd.read_csv(epihiper_path)
 
     if stop_tick is not None:
         initial_count = len(epi_df)
         print(f"Applying stop_tick filter: processing events up to and including tick {stop_tick}.")
-        # Use .copy() to avoid SettingWithCopyWarning later
         epi_df = epi_df[epi_df['tick'] <= stop_tick].copy()
         print(f"Filtered to {len(epi_df)} events (from {initial_count}).")
     
     print(f"Loading persontrait data from {persontrait_path}...")
-    person_df = pd.read_csv(persontrait_path,skiprows=1) # No index needed for a standard merge
+    person_df = pd.read_csv(persontrait_path,skiprows=1)
     print(f"Loading household data from {household_path}...")
     household_df = pd.read_csv(household_path)
     print(f"Loading and pivoting RUCC data from {rucc_path}...")
-    rucc_df = load_and_pivot_rucc(rucc_path) # Assumes load_and_pivot_rucc is available
+    rucc_df = load_and_pivot_rucc(rucc_path)
 
-    # 2. Filter for relevant infectious states (EXCLUDING 'E' states)
+    # 2. Filter for relevant infectious states
     relevant_prefixes = prefix_filter
     initial_count = len(epi_df)
     epi_df = epi_df[epi_df['exit_state'].str.startswith(relevant_prefixes)].copy()
@@ -82,15 +92,10 @@ def process_epihiper(
     epi_df.sort_values(by='tick', inplace=True)
     print("Sorted all events chronologically by tick.")
 
-    # 4. Decorate the event data by merging with other files
-    # Merge persontrait first to get 'hid' and 'county_fips'
+    # 4. Decorate the event data
     decorated_df = epi_df.merge(person_df, on='pid', how='left')
-    
-    # Merge household data (requires 'hid' from the persontrait file)
     decorated_df = decorated_df.merge(household_df, on='hid', how='left')
-
-    # Merge RUCC data (requires 'county_fips' from persontrait file)
-    # Ensure FIPS codes are correctly formatted 5-digit strings
+    
     decorated_df["county_fips"] = decorated_df["county_fips"].astype(str).str.zfill(5)
     rucc_df["FIPS"] = rucc_df["FIPS"].astype(str).str.zfill(5)
     decorated_df = decorated_df.merge(
@@ -101,13 +106,13 @@ def process_epihiper(
     )
     print("Successfully decorated data with person, household, and RUCC info.")
     
-    # 5. Calculate the 'date' column from the tick
+    # 5. Calculate the 'date' column
     base_date = pd.to_datetime(start_date)
     decorated_df['date'] = decorated_df['tick'].apply(
         lambda x: base_date + pd.Timedelta(days=(x - start_tick))
     )
 
-    # 6. Final cleanup of columns before returning
+    # 6. Final cleanup
     final_df = decorated_df.drop(columns=['FIPS'], errors='ignore')
     
     print("--- EpiHiper Processing Complete ---")
@@ -257,7 +262,9 @@ def format_final_linelist(
     final_column_order = [
         'virus', 'region', 'country', 'division', 'divisionExposure', 'date', 'strain',
         'sim_pid', 'sim_tick', 'sex', 'county', 'latitude', 'longitude', 'latino',
-        'race', 'smh_race', 'age_group', 'county_fips', 'hid', 'occupation_socp',
+        'race', 'smh_race', 'age_group',
+        'variant_label', 'component_id', # <-- NEWLY ADDED COLUMNS
+        'county_fips', 'hid', 'occupation_socp',
         'FIPS', 'rucc_code', 'admin1', 'admin2', 'admin3', 'admin4', 'hh_size',
         'vehicles', 'hh_income', 'household_language', 'family_type_and_employment_status',
         'workers_in_family', 'rlid', 'asymptomatic', 'test_prob', 'tested_positive', 'exit_state'
@@ -328,7 +335,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--start_tick", type=int, default=0, help="The simulation tick that corresponds to the start_date.")
     p.add_argument("--stop_tick", type=int, default=None,
                        help="The simulation tick to stop processing at (inclusive). If not provided, processes all ticks.")
-    # Keep the other arguments
+    p.add_argument("--schedule_input", type=str, default=None, help="Path to the importation schedule CSV file to enable variant labeling.")
+    p.add_argument("--variant_mode", type=int, choices=[1, 2], default=2, help="Variant labeling mode: 1 (Temporal) or 2 (Bipartite Time & Size).")
     p.add_argument("--people", required=True, dest="persontrait_file", help="Path to va_persontrait_epihiper.txt.")
     p.add_argument("--households", required=True, help="Path to va_household.csv.")
     p.add_argument("--rucc", required=True, help="Path to Ruralurbancontinuumcodes2023.csv.")
@@ -357,9 +365,35 @@ def main():
             print(f"Error: Invalid format for --prefix_override. Please provide a valid JSON list string.")
             print(f"Details: {e}")
             sys.exit(1)
+
+    print(f"Loading initial EpiHiper data from {args.epihiper}...")
+    epi_df = pd.read_csv(args.epihiper)
     
+    # Conditionally apply variant labeling if a schedule is provided
+    if args.schedule_input:
+        if not LABEL_COMPONENTS_AVAILABLE:
+            print("Error: --schedule_input was provided, but label_components.py could not be imported. Exiting.")
+            sys.exit(1)
+            
+        print(f"Loading schedule data from: {args.schedule_input}")
+        try:
+            sched_df = pd.read_csv(args.schedule_input)
+            
+            # Call the imported function to label the entire epi_df
+            # This adds the `variant_label` column to epi_df in place
+            print(f"Applying variant labels using mode {args.variant_mode}...")
+            epi_df = create_variant_labels(epi_df, sched_df, args.variant_mode)
+            print("Variant labeling complete.")
+            
+        except FileNotFoundError:
+            print(f"Error: Schedule file not found at {args.schedule_input}. Proceeding without variant labels.")
+        except Exception as e:
+            print(f"An error occurred during variant labeling: {e}. Proceeding without variant labels.")
+    else:
+        print("No --schedule_input provided. Skipping variant labeling.")
+
     # Single call to the new data processing function
-    events_df = process_epihiper(
+    events_df_unlabeled = process_epihiper(
         epihiper_path=args.epihiper,
         persontrait_path=args.persontrait_file,
         household_path=args.households,
@@ -369,6 +403,17 @@ def main():
         prefix_filter=tuple(prefix_list),
         stop_tick=args.stop_tick
     )
+
+    if 'variant_label' in epi_df.columns:
+        print("Merging variant labels into processed events DataFrame...")
+        key_cols = ['pid', 'tick', 'exit_state']
+        events_df = events_df_unlabeled.merge(
+            epi_df[key_cols + ['variant_label', 'component_id']], # Select only needed columns
+            on=key_cols,
+            how='left'
+        )
+    else:
+        events_df = events_df_unlabeled
 
     base_output_path = args.out.replace(".csv", "") # Remove .csv if present
 
