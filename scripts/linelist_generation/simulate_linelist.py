@@ -354,22 +354,22 @@ def parse_args() -> argparse.Namespace:
 def main():
     args = parse_args()
     
-    prefix_list = None
-    if args.prefix_override:
-        try:
-            # Safely parse the JSON string from the command line into a Python list
-            prefix_list = json.loads(args.prefix_override)
-            if not isinstance(prefix_list, list):
-                raise ValueError("Parsed object is not a list.")
-        except (json.JSONDecodeError, ValueError) as e:
-            print(f"Error: Invalid format for --prefix_override. Please provide a valid JSON list string.")
-            print(f"Details: {e}")
-            sys.exit(1)
-
-    print(f"Loading initial EpiHiper data from {args.epihiper}...")
-    epi_df = pd.read_csv(args.epihiper)
+    try:
+        prefix_list = json.loads(args.prefix_override)
+        if not isinstance(prefix_list, list): raise ValueError("Parsed object is not a list.")
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"Error: Invalid format for --prefix_override. Please provide a valid JSON list string. Details: {e}")
+        sys.exit(1)
     
-    # Conditionally apply variant labeling if a schedule is provided
+    # --- Step 1: Load Full Simulation Data ---
+    print(f"Loading initial EpiHiper data from {args.epihiper}...")
+    try:
+        epi_df = pd.read_csv(args.epihiper)
+    except FileNotFoundError:
+        print(f"Error: EpiHiper input file not found at {args.epihiper}")
+        sys.exit(1)
+
+    # --- Step 2: (Conditional) Apply Variant Labeling to the FULL DataFrame ---
     if args.schedule_input:
         if not LABEL_COMPONENTS_AVAILABLE:
             print("Error: --schedule_input was provided, but label_components.py could not be imported. Exiting.")
@@ -378,60 +378,82 @@ def main():
         print(f"Loading schedule data from: {args.schedule_input}")
         try:
             sched_df = pd.read_csv(args.schedule_input)
-            
-            # Call the imported function to label the entire epi_df
-            # This adds the `variant_label` column to epi_df in place
-            print(f"Applying variant labels using mode {args.variant_mode}...")
+            print(f"Applying variant labels to full simulation using mode {args.variant_mode}...")
+            # This call modifies epi_df in place or returns a new labeled one
             epi_df = create_variant_labels(epi_df, sched_df, args.variant_mode)
             print("Variant labeling complete.")
-            
         except FileNotFoundError:
-            print(f"Error: Schedule file not found at {args.schedule_input}. Proceeding without variant labels.")
+            print(f"Error: Schedule file not found at {args.schedule_input}. Exiting.")
+            sys.exit(1)
         except Exception as e:
-            print(f"An error occurred during variant labeling: {e}. Proceeding without variant labels.")
+            print(f"An error occurred during variant labeling: {e}. Exiting.")
+            sys.exit(1)
     else:
         print("No --schedule_input provided. Skipping variant labeling.")
+        # Ensure columns exist even if labeling is skipped, for consistent schema
+        epi_df['variant_label'] = 'unassigned'
+        epi_df['component_id'] = -1
 
-    # Single call to the new data processing function
-    events_df_unlabeled = process_epihiper(
-        epihiper_path=args.epihiper,
-        persontrait_path=args.persontrait_file,
-        household_path=args.households,
-        rucc_path=args.rucc,
-        start_date=args.start_date,
-        start_tick=args.start_tick,
-        prefix_filter=tuple(prefix_list),
-        stop_tick=args.stop_tick
-    )
+    # --- Step 3: Apply Filters (start_date/tick) to the Labeled DataFrame ---
+    # This logic is moved out of process_epihiper and applied directly here.
+    
+    # Apply stop_tick filter
+    if args.stop_tick is not None:
+        initial_count = len(epi_df)
+        print(f"Applying stop_tick filter: processing events up to and including tick {args.stop_tick}.")
+        epi_df = epi_df[epi_df['tick'] <= args.stop_tick].copy()
+        print(f"Filtered to {len(epi_df)} events (from {initial_count}).")
+    
+    # Filter for relevant infectious states
+    relevant_prefixes = tuple(prefix_list)
+    initial_count = len(epi_df)
+    events_df = epi_df[epi_df['exit_state'].str.startswith(relevant_prefixes)].copy()
+    print(f"Filtered to {len(events_df)} relevant infectious events (from {initial_count} total).")
 
-    if 'variant_label' in epi_df.columns:
-        print("Merging variant labels into processed events DataFrame...")
-        key_cols = ['pid', 'tick', 'exit_state']
-        events_df = events_df_unlabeled.merge(
-            epi_df[key_cols + ['variant_label', 'component_id']], # Select only needed columns
-            on=key_cols,
-            how='left'
-        )
-    else:
-        events_df = events_df_unlabeled
-
-    base_output_path = args.out.replace(".csv", "") # Remove .csv if present
-
-
-    # Load the ascertainment model parameters from the YAML file
-    full_params = load_ascertainment_parameters(args.ascertain)
-
-    # This accounts for the top-level 'ascertainment_parameters' key in the YAML.
+    if events_df.empty:
+        print("No relevant events found after time and state filtering. Exiting.")
+        exit(0)
+    
+    # --- Step 4: Decorate the Filtered Events DataFrame ---
+    # This logic is also moved from process_epihiper
+    print("Decorating filtered events with person, household, and location data...")
     try:
+        person_df = pd.read_csv(args.persontrait_file, skiprows=1)
+        household_df = pd.read_csv(args.households)
+        rucc_df = load_and_pivot_rucc(args.rucc)
+    except FileNotFoundError as e:
+        print(f"Error: A required data file was not found: {e}. Exiting.")
+        sys.exit(1)
+
+    events_df = events_df.merge(person_df, on='pid', how='left')
+    events_df = events_df.merge(household_df, on='hid', how='left')
+
+    events_df["county_fips"] = events_df["county_fips"].astype(str).str.zfill(5)
+    rucc_df["FIPS"] = rucc_df["FIPS"].astype(str).str.zfill(5)
+    events_df = events_df.merge(
+        rucc_df[["FIPS", "rucc_code"]],
+        left_on="county_fips", right_on="FIPS", how="left"
+    ).drop(columns=['FIPS'], errors='ignore')
+
+    base_date = pd.to_datetime(args.start_date)
+    events_df['date'] = events_df['tick'].apply(
+        lambda x: base_date + pd.Timedelta(days=(x - args.start_tick))
+    )
+    print("Decoration complete.")
+
+    # --- Step 5: Proceed with Ascertainment Simulation ---
+    # The rest of the script continues as before, now using the correctly filtered and decorated `events_df`.
+    base_output_path = args.out.replace(".csv", "")
+
+    try:
+        full_params = load_ascertainment_parameters(args.ascertain)
         params = full_params['ascertainment_parameters']
-    except KeyError:
-        print(f"Error: The YAML file {args.ascertain} is missing the required top-level 'ascertainment_parameters' key.")
-        return # Exit if the structure is wrong
+    except (FileNotFoundError, KeyError) as e:
+        print(f"Error loading or parsing ascertainment parameters from {args.ascertain}: {e}")
+        sys.exit(1)
 
     print("--- Pre-processing all potential events for simulation ---")
     preprocessed_events_df = preprocess_for_ascertainment(events_df)
-
-    # Calculate probabilities for ALL potential events at once
     preprocessed_events_df["ascertainment_prob"] = preprocessed_events_df.apply(
         lambda row: compute_ascertainment_probability(row, params), axis=1
     )
@@ -449,18 +471,13 @@ def main():
         formatted_events_df.to_csv(all_events_path, index=False, compression='xz')
         print(f"Wrote {len(formatted_events_df):,} potential event rows to {all_events_path}")
 
-
-
     base_seed = args.seed if args.seed is not None else 0
     seeds = [base_seed + i for i in range(args.n_seeds)]
 
-
     for s in seeds:
         print(f"\n--- Running simulation for seed {s} ---")
-        # The 'simulate' function now contains the core Model B logic
         raw_linelist_df = simulate(preprocessed_events_df, params=params, seed=s)
         final_linelist_df = format_final_linelist(raw_linelist_df)
-
 
         if args.n_seeds > 1:
             out_path = args.out.replace(".csv", f"_seed{s}.csv.xz")
