@@ -18,7 +18,7 @@ BASE_INPUT_DIR="/project/bii_nssac/epihiper-simulations/pipeline-jc/run/20250120
 
 # The base directory where all output will be saved
 BASE_OUTPUT_DIR="/project/bii_nssac/biocomplexity/c4gc_asw3xp/LineList/asw_test/twin_sampler/scripts/linelist_generation/results"
-SCHEDULE_FILE="/path/to/your/Virginia_schedule.csv"
+SCHEDULE_FILE="/project/bii_nssac/biocomplexity/c4gc_asw3xp/LineList/asw_test/twin_sampler/Data/Virginia_importation_schedule.csv"
 
 # The path to your worker script
 WORKER_SCRIPT="./generate_linelist.sh"
