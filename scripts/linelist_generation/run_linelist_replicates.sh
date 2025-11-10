@@ -59,6 +59,6 @@ echo "Starting worker for replicate ${SLURM_ARRAY_TASK_ID}"
 echo "Input file: $EPIHIPER_FILE"
 echo "Output base path: $OUTPUT_FILE"
 
-bash "$WORKER_SCRIPT" "$EPIHIPER_FILE" "$SCHEDULE_FILE" "$OUTPUT_BASE_PATH"
+bash "$WORKER_SCRIPT" "$EPIHIPER_FILE" "$SCHEDULE_FILE" "$OUTPUT_FILE"
 
 echo "Worker script finished for replicate ${SLURM_ARRAY_TASK_ID}"
