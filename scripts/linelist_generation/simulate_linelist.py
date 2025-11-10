@@ -483,6 +483,8 @@ def main():
             out_path = args.out.replace(".csv", f"_seed{s}.csv.xz")
         else:
             out_path = args.out
+        if not out_path.endswith(".xz"):
+            out_path=out_path+".xz"
 
         final_linelist_df.to_csv(out_path, index=False, compression='xz')
         print(f"Wrote {len(final_linelist_df):,} rows to {out_path} for seed {s}")
