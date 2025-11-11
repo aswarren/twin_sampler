@@ -159,7 +159,7 @@ def create_variant_labels(epihiper_df, schedule_df, mode):
     
     # Create graph and get component IDs
     component_df = create_component_table(infection_df)
-    
+    infection_df['alias_pid'] = (infection_df['pid'].astype(str) + '.' + infection_df['tick'].astype(str))
     # Merge component IDs back into the infection data
     merged_df = pd.merge(infection_df, component_df, on='alias_pid', how='left')
     
