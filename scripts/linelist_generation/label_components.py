@@ -195,15 +195,25 @@ def create_variant_labels(epihiper_df, schedule_df, mode):
     # Merge the final labels into the full infection dataframe
     final_df = pd.merge(merged_df, component_summary[['component_id', 'variant_label']], on='component_id', how='left')
     
-    # The original script propagated component_id. We can do the same with variant_label.
-    # First, link variant_label to every event in the full epihiper_df via pid
-    pid_to_label = final_df.set_index('pid')['variant_label'].to_dict()
-    epihiper_df['variant_label'] = epihiper_df['pid'].map(pid_to_label)
+    # propagate component_id and variant_label.
+    #create alias_pid for epihiper_df
+    epihiper_df['alias_pid'] = (epihiper_df['pid'].astype(str) + '.' + epihiper_df['tick'].astype(str))
+    # link variant_label to every event in the full epihiper_df via pid
+    pid_to_label = final_df.set_index('alias_pid')['variant_label'].to_dict()
+    pid_to_component = final_df.set_index('alias_pid')['component_id'].to_dict()
+
+    epihiper_df['variant_label'] = epihiper_df['alias_pid'].map(pid_to_label)
+    epihiper_df['component_id'] = epihiper_df['alias_pid'].map(pid_to_component)
     
     # Forward fill the labels for each person's timeline
-    epihiper_df.sort_values(['pid', 'tick'], inplace=True)
+    #check if epihiper_df is sorted by only tick, prefer to keep it in orginal order
+    if not epihiper_df['tick'].is_monotonic_increasing:
+        print("Warning: epihiper_df is not sorted by 'tick'. Sorting now.")
+        epihiper_df.sort_values(['tick'], inplace=True)
     epihiper_df['variant_label'] = epihiper_df.groupby('pid')['variant_label'].ffill()
     epihiper_df['variant_label'].fillna('background', inplace=True) # Label non-infected people
+    epihiper_df['component_id'] = epihiper_df.groupby('pid')['component_id'].ffill()
+    epihiper_df['component_id'].fillna(-1, inplace=True) # Label non-infected people
 
     return epihiper_df
 
