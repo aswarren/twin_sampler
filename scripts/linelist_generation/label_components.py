@@ -98,9 +98,12 @@ def mode1_temporal_match(sim_components, real_imports):
             
     return assignments
 
-def mode2_bipartite_match(sim_components, real_imports, time_weight=0.5):
-    """Assigns variants using optimized bipartite matching on time and size."""
-    print(f"  Applying Mode 2: Bipartite Matching (time_weight={time_weight})...")
+def mode2_bipartite_match(sim_components, real_imports, time_weight=0.7, max_time_penalty_days=90):
+    """
+    Assigns variants using optimized bipartite matching on time and size,
+    with a heavy penalty for matches outside a reasonable time window.
+    """
+    print(f"  Applying Mode 2: Bipartite Matching (time_weight={time_weight}, penalty_window={max_time_penalty_days} days)...")
     if real_imports.empty or sim_components.empty:
         return {}
 
@@ -111,16 +114,27 @@ def mode2_bipartite_match(sim_components, real_imports, time_weight=0.5):
     # Create the cost matrix
     cost_matrix = np.zeros((len(sim_components), len(real_imports)))
     
+    # Normalize time cost by the penalty window, not the max time diff
+    # This makes the time cost scale more aggressively.
+    time_normalizer = float(max_time_penalty_days)
+    
     for i, sim_row in sim_components.iterrows():
         for j, real_row in real_imports.iterrows():
-            time_cost = abs(sim_row['first_tick'] - real_row['tick'])
+            time_diff = abs(sim_row['first_tick'] - real_row['tick'])
             size_cost = abs(sim_row['norm_size'] - real_row['norm_size'])
-            # We need to normalize time_cost as well
-            # A simple way is to divide by the max possible time difference
-            max_time_diff = max(sim_components['first_tick'].max(), real_imports['tick'].max())
-            norm_time_cost = time_cost / max_time_diff if max_time_diff > 0 else 0
             
-            cost_matrix[i, j] = (time_weight * norm_time_cost) + ((1 - time_weight) * size_cost)
+            # --- NEW PENALTY LOGIC ---
+            # Normalized time cost (scales from 0 to 1 within the window)
+            norm_time_cost = time_diff / time_normalizer
+
+            # The cost is a weighted average of time and size difference
+            base_cost = (time_weight * norm_time_cost) + ((1 - time_weight) * size_cost)
+
+            # Add a massive penalty if the time difference is outside our acceptable window
+            if time_diff > max_time_penalty_days:
+                base_cost += 1000  # A large number to make this match highly undesirable
+            
+            cost_matrix[i, j] = base_cost
             
     # Solve the assignment problem
     sim_indices, real_indices = linear_sum_assignment(cost_matrix)
@@ -178,7 +192,7 @@ def create_variant_labels(epihiper_df, schedule_df, mode):
     if mode == 1:
         assignment_map = mode1_temporal_match(component_summary, real_imports_df)
     elif mode == 2:
-        assignment_map = mode2_bipartite_match(component_summary, real_imports_df)
+        assignment_map = mode2_bipartite_match(component_summary, real_imports_df, time_weight=0.7, max_time_penalty_days=90)
     
     if not assignment_map:
         print("Warning: No variant assignments were made. Components will not be labeled.")
