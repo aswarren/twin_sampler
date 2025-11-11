@@ -112,7 +112,6 @@ def compute_ascertainment_probability(row: pd.Series, params: Dict[str, Any]) ->
     testing_prob.compute_testing_probability().
     """
     try:
-        # --- ALL LOOKUPS BELOW ARE NOW CORRECTED ---
 
         # 1. Base Probability (This was already correct)
         severity_key = row['symptom_severity']

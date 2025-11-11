@@ -42,35 +42,31 @@ except ImportError as e:
     LABEL_COMPONENTS_AVAILABLE = False
 
 def process_epihiper(
-    epihiper_path: str,
+    events_df: pd.DataFrame, 
     persontrait_path: str,
     household_path: str,
     rucc_path: str,
     start_date: str,
     start_tick: int,
-    prefix_filter: tuple,
-    stop_tick: int | None = None
+    prefix_filter: tuple
 ) -> pd.DataFrame:
     """
-    Loads raw EpiHiper output, filters for relevant infectious states (A, P, I, dm, hM),
-    sorts chronologically, and decorates with person/household/location data.
-
-    Returns:
-        A single, sorted DataFrame of all potential ascertainment events.
+    Takes a epihiper dataframe filters it further for
+    ascertainable states, and decorates it with person/household/location data.
+    It is designed to PRESERVE all existing columns from the input base_df.
     """
     print("--- Starting EpiHiper Processing (Model B: First Ascertained Event) ---")
 
-    # 1. Load all required data files
-    print(f"Loading EpiHiper data from {epihiper_path}...")
-    # The epi_df passed to this function is now pre-loaded and potentially pre-labeled
-    epi_df = pd.read_csv(epihiper_path)
-
-    if stop_tick is not None:
-        initial_count = len(epi_df)
-        print(f"Applying stop_tick filter: processing events up to and including tick {stop_tick}.")
-        epi_df = epi_df[epi_df['tick'] <= stop_tick].copy()
-        print(f"Filtered to {len(epi_df)} events (from {initial_count}).")
+    # 1. Filter for relevant ascertainable infectious states
+    initial_count = len(events_df)
+    events_df = events_df[events_df['exit_state'].str.startswith(prefix_filter)].copy()
+    print(f"Filtered to {len(events_df)} relevant ascertainable events (from {initial_count}).")
     
+    if events_df.empty:
+        print("Warning: No relevant ascertainable events found after filtering.")
+        return pd.DataFrame()
+    
+    # 2. Load decoration data
     print(f"Loading persontrait data from {persontrait_path}...")
     person_df = pd.read_csv(persontrait_path,skiprows=1)
     print(f"Loading household data from {household_path}...")
@@ -78,43 +74,26 @@ def process_epihiper(
     print(f"Loading and pivoting RUCC data from {rucc_path}...")
     rucc_df = load_and_pivot_rucc(rucc_path)
 
-    # 2. Filter for relevant infectious states
-    relevant_prefixes = prefix_filter
-    initial_count = len(epi_df)
-    epi_df = epi_df[epi_df['exit_state'].str.startswith(relevant_prefixes)].copy()
-    print(f"Filtered to {len(epi_df)} relevant infectious events (from {initial_count} total).")
-    
-    if epi_df.empty:
-        print("Warning: No relevant infectious events found after filtering. Returning empty DataFrame.")
-        return pd.DataFrame()
-
-    # 3. Sort events chronologically by tick
-    epi_df.sort_values(by='tick', inplace=True)
-    print("Sorted all events chronologically by tick.")
-
-    # 4. Decorate the event data
+    # 3. Decorate the event data
     decorated_df = epi_df.merge(person_df, on='pid', how='left')
     decorated_df = decorated_df.merge(household_df, on='hid', how='left')
     
-    decorated_df["county_fips"] = decorated_df["county_fips"].astype(str).str.zfill(5)
-    rucc_df["FIPS"] = rucc_df["FIPS"].astype(str).str.zfill(5)
-    decorated_df = decorated_df.merge(
-        rucc_df[["FIPS", "rucc_code"]],
-        left_on="county_fips",
-        right_on="FIPS",
-        how="left",
-    )
+    if "county_fips" in decorated_df.columns:
+        decorated_df["county_fips"] = decorated_df["county_fips"].astype(str).str.zfill(5)
+        rucc_df["FIPS"] = rucc_df["FIPS"].astype(str).str.zfill(5)
+        decorated_df = decorated_df.merge(
+            rucc_df[["FIPS", "rucc_code"]],
+            left_on="county_fips",
+            right_on="FIPS",
+            how="left",
+        ).drop(columns=['FIPS'], errors='ignore')
     print("Successfully decorated data with person, household, and RUCC info.")
     
-    # 5. Calculate the 'date' column
+    # 4. Calculate the 'date' column
     base_date = pd.to_datetime(start_date)
     decorated_df['date'] = decorated_df['tick'].apply(
         lambda x: base_date + pd.Timedelta(days=(x - start_tick))
     )
-
-    # 6. Final cleanup
-    final_df = decorated_df.drop(columns=['FIPS'], errors='ignore')
-    
     print("--- EpiHiper Processing Complete ---")
     return final_df
 
@@ -356,43 +335,47 @@ def main():
     
     try:
         prefix_list = json.loads(args.prefix_override)
-        if not isinstance(prefix_list, list): raise ValueError("Parsed object is not a list.")
     except (json.JSONDecodeError, ValueError) as e:
-        print(f"Error: Invalid format for --prefix_override. Please provide a valid JSON list string. Details: {e}")
+        print(f"Error: Invalid format for --prefix_override: {e}")
         sys.exit(1)
     
-    # --- Step 1: Process and Filter EpiHiper Data FIRST ---
-    # This function now handles loading, time filtering, state filtering, and decorating
-    events_df = process_epihiper(
-        epihiper_path=args.epihiper,
-        persontrait_path=args.persontrait_file,
-        household_path=args.households,
-        rucc_path=args.rucc,
-        start_date=args.start_date,
-        start_tick=args.start_tick,
-        prefix_filter=tuple(prefix_list),
-        stop_tick=args.stop_tick
-    )
+    # --- Step 1: Load Full Simulation Data ---
+    print(f"Loading initial EpiHiper data from {args.epihiper}...")
+    try:
+        epi_df = pd.read_csv(args.epihiper)
+    except FileNotFoundError:
+        print(f"Error: EpiHiper input file not found at {args.epihiper}")
+        sys.exit(1)
 
-    if events_df is None or events_df.empty:
-        print("No relevant events found after initial processing and filtering. Exiting.")
+    # --- Step 2: Apply Time Filtering FIRST ---
+    if args.start_tick is not None or args.stop_tick is not None:
+        initial_count = len(epi_df)
+        print(f"Applying time filter: start_tick={args.start_tick}, stop_tick={args.stop_tick}.")
+        
+        if args.start_tick is not None:
+             epi_df = epi_df[epi_df['tick'] >= args.start_tick].copy()
+        if args.stop_tick is not None:
+            epi_df = epi_df[epi_df['tick'] <= args.stop_tick].copy()
+            
+        print(f"Filtered to {len(epi_df)} events (from {initial_count}) within the time window.")
+
+    if epi_df.empty:
+        print("No events found in the specified time window. Exiting.")
         exit(0)
 
-    # --- Step 2: (Conditional) Apply Variant Labeling to the FILTERED DataFrame ---
+    # --- Step 3: (Conditional) Apply Variant Labeling to the TIME-FILTERED DataFrame ---
     if args.schedule_input:
         if not LABEL_COMPONENTS_AVAILABLE:
-            print("Error: --schedule_input was provided, but label_components.py could not be imported. Exiting.")
+            print("Error: --schedule_input provided, but label_components.py could not be imported. Exiting.")
             sys.exit(1)
-            
+        
         print(f"Loading schedule data from: {args.schedule_input}")
         try:
             sched_df = pd.read_csv(args.schedule_input)
-            
-            # Call the labeling function on the already-filtered events_df
-            print(f"Applying variant labels to filtered simulation data using mode {args.variant_mode}...")
-            events_df = create_variant_labels(events_df, sched_df, args.variant_mode)
+            print(f"Applying variant labels to time-filtered simulation using mode {args.variant_mode}...")
+            # This call now receives the time-filtered data and returns it with labels
+            labeled_df = create_variant_labels(epi_df, sched_df, args.variant_mode)
             print("Variant labeling complete.")
-            
         except FileNotFoundError:
             print(f"Error: Schedule file not found at {args.schedule_input}. Exiting.")
             sys.exit(1)
@@ -401,11 +384,30 @@ def main():
             sys.exit(1)
     else:
         print("No --schedule_input provided. Skipping variant labeling.")
-        events_df['variant_label'] = 'unassigned'
-        events_df['component_id'] = -1
+        labeled_df = epi_df.copy() # Use the time-filtered df
+        labeled_df['variant_label'] = 'unassigned'
+        labeled_df['component_id'] = -1
 
-    # --- Step 3: Proceed with Ascertainment Simulation ---
-    # The `events_df` is now filtered, decorated, AND labeled.
+    # --- Step 4: Process Events for Ascertainment ---
+    # Call the new helper function with the labeled, time-filtered DataFrame
+    events_df = process_epihiper(
+        events_df=labeled_df,
+        persontrait_path=args.persontrait_file,
+        household_path=args.households,
+        rucc_path=args.rucc,
+        start_date=args.start_date,
+        start_tick=args.start_tick,
+        prefix_filter=tuple(prefix_list)
+    )
+
+    if events_df is None or events_df.empty:
+        print("No relevant events found after processing and state filtering. Exiting.")
+        exit(0)
+    
+    # --- Step 5: Proceed with Ascertainment Simulation ---
+    # ... (The rest of main() remains exactly the same, as it now receives a correctly
+    #      filtered, decorated, and labeled `events_df`)
+    
     base_output_path = args.out.replace(".csv", "")
 
     try:
@@ -423,14 +425,8 @@ def main():
     
     if args.output_all_events:
         print("--- Processing and saving all potential events (pre-ascertainment simulation) ---")
-        
-        # Format the original, pre-simulation events_df using the same function
         formatted_events_df = format_final_linelist(preprocessed_events_df)
-
-        # Determine the single, non-seed-specific output path
         all_events_path = f"{base_output_path}_allevents.csv.xz"
-
-        # Save the formatted "all events" DataFrame with XZ compression
         formatted_events_df.to_csv(all_events_path, index=False, compression='xz')
         print(f"Wrote {len(formatted_events_df):,} potential event rows to {all_events_path}")
 
@@ -446,8 +442,10 @@ def main():
             out_path = args.out.replace(".csv", f"_seed{s}.csv.xz")
         else:
             out_path = args.out
-        if not out_path.endswith(".xz"):
-            out_path=out_path+".xz"
+        if not out_path.endswith((".xz", ".csv")):
+            out_path = out_path + ".csv.xz"
+        elif out_path.endswith(".csv"):
+             out_path = out_path + ".xz"
 
         final_linelist_df.to_csv(out_path, index=False, compression='xz')
         print(f"Wrote {len(final_linelist_df):,} rows to {out_path} for seed {s}")
