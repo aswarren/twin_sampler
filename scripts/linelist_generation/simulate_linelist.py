@@ -361,15 +361,24 @@ def main():
         print(f"Error: Invalid format for --prefix_override. Please provide a valid JSON list string. Details: {e}")
         sys.exit(1)
     
-    # --- Step 1: Load Full Simulation Data ---
-    print(f"Loading initial EpiHiper data from {args.epihiper}...")
-    try:
-        epi_df = pd.read_csv(args.epihiper)
-    except FileNotFoundError:
-        print(f"Error: EpiHiper input file not found at {args.epihiper}")
-        sys.exit(1)
+    # --- Step 1: Process and Filter EpiHiper Data FIRST ---
+    # This function now handles loading, time filtering, state filtering, and decorating
+    events_df = process_epihiper(
+        epihiper_path=args.epihiper,
+        persontrait_path=args.persontrait_file,
+        household_path=args.households,
+        rucc_path=args.rucc,
+        start_date=args.start_date,
+        start_tick=args.start_tick,
+        prefix_filter=tuple(prefix_list),
+        stop_tick=args.stop_tick
+    )
 
-    # --- Step 2: (Conditional) Apply Variant Labeling to the FULL DataFrame ---
+    if events_df is None or events_df.empty:
+        print("No relevant events found after initial processing and filtering. Exiting.")
+        exit(0)
+
+    # --- Step 2: (Conditional) Apply Variant Labeling to the FILTERED DataFrame ---
     if args.schedule_input:
         if not LABEL_COMPONENTS_AVAILABLE:
             print("Error: --schedule_input was provided, but label_components.py could not be imported. Exiting.")
@@ -378,10 +387,12 @@ def main():
         print(f"Loading schedule data from: {args.schedule_input}")
         try:
             sched_df = pd.read_csv(args.schedule_input)
-            print(f"Applying variant labels to full simulation using mode {args.variant_mode}...")
-            # This call modifies epi_df in place or returns a new labeled one
-            epi_df = create_variant_labels(epi_df, sched_df, args.variant_mode)
+            
+            # Call the labeling function on the already-filtered events_df
+            print(f"Applying variant labels to filtered simulation data using mode {args.variant_mode}...")
+            events_df = create_variant_labels(events_df, sched_df, args.variant_mode)
             print("Variant labeling complete.")
+            
         except FileNotFoundError:
             print(f"Error: Schedule file not found at {args.schedule_input}. Exiting.")
             sys.exit(1)
@@ -390,59 +401,11 @@ def main():
             sys.exit(1)
     else:
         print("No --schedule_input provided. Skipping variant labeling.")
-        # Ensure columns exist even if labeling is skipped, for consistent schema
-        epi_df['variant_label'] = 'unassigned'
-        epi_df['component_id'] = -1
+        events_df['variant_label'] = 'unassigned'
+        events_df['component_id'] = -1
 
-    # --- Step 3: Apply Filters (start_date/tick) to the Labeled DataFrame ---
-    # This logic is moved out of process_epihiper and applied directly here.
-    
-    # Apply stop_tick filter
-    if args.stop_tick is not None:
-        initial_count = len(epi_df)
-        print(f"Applying stop_tick filter: processing events up to and including tick {args.stop_tick}.")
-        epi_df = epi_df[epi_df['tick'] <= args.stop_tick].copy()
-        print(f"Filtered to {len(epi_df)} events (from {initial_count}).")
-    
-    # Filter for relevant infectious states
-    relevant_prefixes = tuple(prefix_list)
-    initial_count = len(epi_df)
-    events_df = epi_df[epi_df['exit_state'].str.startswith(relevant_prefixes)].copy()
-    print(f"Filtered to {len(events_df)} relevant infectious events (from {initial_count} total).")
-
-    if events_df.empty:
-        print("No relevant events found after time and state filtering. Exiting.")
-        exit(0)
-    
-    # --- Step 4: Decorate the Filtered Events DataFrame ---
-    # This logic is also moved from process_epihiper
-    print("Decorating filtered events with person, household, and location data...")
-    try:
-        person_df = pd.read_csv(args.persontrait_file, skiprows=1)
-        household_df = pd.read_csv(args.households)
-        rucc_df = load_and_pivot_rucc(args.rucc)
-    except FileNotFoundError as e:
-        print(f"Error: A required data file was not found: {e}. Exiting.")
-        sys.exit(1)
-
-    events_df = events_df.merge(person_df, on='pid', how='left')
-    events_df = events_df.merge(household_df, on='hid', how='left')
-
-    events_df["county_fips"] = events_df["county_fips"].astype(str).str.zfill(5)
-    rucc_df["FIPS"] = rucc_df["FIPS"].astype(str).str.zfill(5)
-    events_df = events_df.merge(
-        rucc_df[["FIPS", "rucc_code"]],
-        left_on="county_fips", right_on="FIPS", how="left"
-    ).drop(columns=['FIPS'], errors='ignore')
-
-    base_date = pd.to_datetime(args.start_date)
-    events_df['date'] = events_df['tick'].apply(
-        lambda x: base_date + pd.Timedelta(days=(x - args.start_tick))
-    )
-    print("Decoration complete.")
-
-    # --- Step 5: Proceed with Ascertainment Simulation ---
-    # The rest of the script continues as before, now using the correctly filtered and decorated `events_df`.
+    # --- Step 3: Proceed with Ascertainment Simulation ---
+    # The `events_df` is now filtered, decorated, AND labeled.
     base_output_path = args.out.replace(".csv", "")
 
     try:
