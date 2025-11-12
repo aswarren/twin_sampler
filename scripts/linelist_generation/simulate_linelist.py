@@ -95,7 +95,7 @@ def process_epihiper(
         lambda x: base_date + pd.Timedelta(days=(x - start_tick))
     )
     print("--- EpiHiper Processing Complete ---")
-    return final_df
+    return decorated_df
 
 def _normalize_age_group_column(df: pd.DataFrame) -> pd.DataFrame:
     """Replace Unicode dashes with ASCII hyphens and trim whitespace."""
