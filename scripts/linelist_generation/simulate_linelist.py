@@ -75,7 +75,7 @@ def process_epihiper(
     rucc_df = load_and_pivot_rucc(rucc_path)
 
     # 3. Decorate the event data
-    decorated_df = epi_df.merge(person_df, on='pid', how='left')
+    decorated_df = events_df.merge(person_df, on='pid', how='left')
     decorated_df = decorated_df.merge(household_df, on='hid', how='left')
     
     if "county_fips" in decorated_df.columns:
