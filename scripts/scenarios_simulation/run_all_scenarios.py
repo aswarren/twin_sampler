@@ -463,6 +463,10 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
             else:
                 prior_groups = [g for lst in list(recent) for g in lst]
 
+            state["week_id"] = week_idx_for_target
+            state["scenario_id"] = scfg.get("id")
+            state["algo_name"] = algo_name
+
             # ----- sample (seeded) FROM CHOSEN POOL -----
             sample_df = sampler(pool_df, target_dist, batch_size, min_per_group, prior_groups, state, rng)
 
@@ -499,7 +503,7 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
             raise ValueError(f"Unknown eval_metric: {metric}")
         per_algo_eval[algo] = ys
 
-    return weekly_hist, per_algo_eval, per_algo_time, weekly_samples
+    return weekly_hist, per_algo_eval, per_algo_time, weekly_samples, state
 
 
 
@@ -546,10 +550,18 @@ def main():
 
     for scfg in SCENARIOS:
         print(f"\n=== Running {scfg['name']} ===")
-        weekly_hist, per_algo_eval, per_algo_time, weekly_samples = run_one_scenario(
+        weekly_hist, per_algo_eval, per_algo_time, weekly_samples, algo_state = run_one_scenario(
             line_df, args.date_field, POP_DIST_STATIC, weekly_ll_hist,
             scfg, rng_master, start_date, args.min_pool, overrides, algorithms=ALG
         )
+
+        # # ---- Save cluster history if present ----
+        # hist = algo_state.get("cluster_history")
+        # if hist:
+        #     out = outdir / f"cluster_history_scen{scfg['id']}_{algo_state.get('algo_name','ALG')}.csv"
+        #     pd.concat(hist, ignore_index=True).to_csv(out, index=False)
+        #     print(f"Saved cluster history to {out}")
+
 
         all_weekly_hist[scfg["id"]] = weekly_hist
 

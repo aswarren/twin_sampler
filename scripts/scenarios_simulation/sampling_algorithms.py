@@ -506,6 +506,13 @@ def stratified_proportional_sampler(
 
     # If we’re still short and allowed, fill from non-target groups uniformly
     shortfall = batch_size - len(taken_df)
+
+    # week_id = (state or {}).get("week_id", "?")
+    # print(
+    #     f"[Stratified] week={week_id} leftovers_for_nontarget={max(shortfall, 0)} "
+    #     f"(batch={batch_size}, stratified_target={len(taken_df)})"
+    # )
+
     if shortfall > 0 and fill_from_nontarget:
         remaining_pool = df.drop(index=taken_df.index, errors="ignore")
         if not remaining_pool.empty:
@@ -822,21 +829,280 @@ def lasso_clustered_vecgreedy_sampler(
 
     out = df.loc[picked_row_ids].copy() if picked_row_ids else df.iloc[0:0].copy()
 
-    # --- after building `out` (the final DataFrame) and before returning ---
+    # --- compute KL at group level (prior + this batch) ---
+    try:
+        if prior_groups or not out.empty:
+            combined = (prior_groups or []) + out["group"].tolist()
+            p_groups = pd.Series(combined).value_counts(normalize=True)
+            q_groups = target_dist.reindex(p_groups.index).fillna(0.0).astype(float)
+            kl_groups = kl_dist(p_groups, q_groups)
+        else:
+            kl_groups = float("nan")
+    except Exception:
+        kl_groups = float("nan")
+
+    # --- compute KL at supergroup (cluster) level ---
+    try:
+        total_c = float(cS.sum())
+        sum_qS = float(qS.sum())
+        if total_c > 0 and sum_qS > 0:
+            p_clusters = pd.Series(cS / total_c, index=agg["cluster"])
+            q_clusters = pd.Series(qS / sum_qS, index=agg["cluster"])
+            kl_clusters = kl_dist(p_clusters, q_clusters)
+        else:
+            kl_clusters = float("nan")
+    except Exception:
+        kl_clusters = float("nan")
+
+    # --- log alpha and KLs ---
     try:
         alpha_used = float(getattr(model, "alpha_", getattr(model, "alpha", float("nan"))))
     except Exception:
         alpha_used = float("nan")
 
-    week_id = (state or {}).get("week_id", "?")
-    print(
-        f"[LASSO-VecGreedy] week={week_id} done | "
-        f"groups={nG} trainable={len(Gc)} clusters={B} "
-        f"picked={len(out)} alpha={alpha_used:.6g}"
-    )
+    # week_id = (state or {}).get("week_id", "?")
+    # print(
+    #     f"[LASSO-VecGreedy] week={week_id} done | "
+    #     f"groups={nG} trainable={len(Gc)} clusters={B} "
+    #     f"picked={len(out)} alpha={alpha_used:.6g} "
+    #     f"KL_groups={kl_groups:.6g} KL_clusters={kl_clusters:.6g}"
+    # )
 
     return out.reset_index(drop=True)
 
+
+def _rint(rng: np.random.Generator) -> int:
+    return int(rng.integers(0, 2**31 - 1))
+
+def _largest_remainder_alloc(p: pd.Series, total: int, caps: pd.Series, rng: np.random.Generator) -> pd.Series:
+    """Hamilton rounding with capacity caps."""
+    if total <= 0 or p.empty:
+        return pd.Series(0, index=p.index, dtype=int)
+    p = p.clip(lower=0)
+    s = float(p.sum())
+    if s <= 0:
+        p = pd.Series(1.0, index=p.index) / len(p)
+    else:
+        p = p / s
+    ideal = p * total
+    base = np.floor(ideal).astype(int)
+    base = base.clip(upper=caps.reindex(base.index).fillna(0).astype(int))
+    remaining = int(total - base.sum())
+    if remaining <= 0:
+        return base
+
+    rem = (ideal - base).astype(float)
+    # jitter to break ties reproducibly
+    if len(rem) > 1:
+        jitter = pd.Series(rng.random(len(rem)), index=rem.index) * 1e-12
+        rem = rem + jitter
+    order = rem.sort_values(ascending=False).index.tolist()
+
+    alloc = base.copy()
+    i = 0
+    while remaining > 0 and len(order) > 0:
+        g = order[i % len(order)]
+        cap_g = int(caps.get(g, 0))
+        if alloc[g] < cap_g:
+            alloc[g] += 1
+            remaining -= 1
+        i += 1
+        if all(alloc[h] >= int(caps.get(h, 0)) for h in order):
+            break
+    return alloc
+
+def lasso_clustered_stratified_sampler(
+    line_df: pd.DataFrame,
+    target_dist: pd.Series,
+    batch_size: int,
+    min_per_group: int,      # unused (compat)
+    prior_groups: list[str],
+    state: dict,             # options below
+    rng: np.random.Generator,
+) -> pd.DataFrame:
+    """
+    LASSO-clustered Stratified Sampler
+
+    Same LASSO fit + quantile clustering as the greedy variant, but allocation is:
+      1) Across supergroups: proportional to aggregated target mass q_S (Hamilton rounding, with caps).
+      2) Within each supergroup: proportional to member q_g (again Hamilton, with caps).
+      3) Sample without replacement per group.
+
+    State options:
+      - max_supergroups: int (default 50)
+      - cluster_bins: int or None (default None => max_supergroups)
+      - lasso_alpha: float or None (default None => LassoCV)
+      - lasso_cv_folds: int (default 5)  # when lasso_alpha is None
+      - intra_weights: {"q", "cap_q"} (default "cap_q")
+            "q": allocate within supergroup ∝ q_g
+            "cap_q": allocate within supergroup ∝ cap_g * q_g
+      - renormalize_to_available: bool (default True)
+      - fill_shortfall_uniform: bool (default True)  # if stratified cannot fill due to caps
+      - debug: bool (default False)
+    """
+    df = line_df.copy()
+    if df.empty or batch_size <= 0:
+        return df.iloc[0:0].copy()
+
+    state = state or {}
+    max_super = int(state.get("max_supergroups", 500))
+    cluster_bins = int(state.get("cluster_bins", max_super))
+    lasso_alpha = state.get("lasso_alpha", None)
+    lasso_cv_folds = int(state.get("lasso_cv_folds", 5))
+    intra_mode = str(state.get("intra_weights", "cap_q")).lower()
+    renorm = bool(state.get("renormalize_to_available", True))
+    fill_shortfall_uniform = bool(state.get("fill_shortfall_uniform", True))
+    debug = bool(state.get("debug", False))
+
+    # ---- availability & groups (pool-level) ----
+    avail_counts = df["group"].value_counts().astype(int)
+    groups = avail_counts.index
+    if len(groups) == 0:
+        return df.iloc[0:0].copy()
+
+    cap = avail_counts.copy()
+
+    # ---- target probs restricted to available groups ----
+    q = target_dist.reindex(groups).fillna(0.0).astype(float)
+    qs = float(q.sum())
+    q = (q / qs) if (qs > 0) else pd.Series(1.0 / len(groups), index=groups)
+
+    # ---- prior counts on available groups ----
+    prior_series = pd.Series(prior_groups).value_counts() if prior_groups else pd.Series(dtype=float)
+    prior_series = prior_series.reindex(groups).fillna(0.0).astype(float)
+
+    # ---- labels: true marginal KL per group ----
+    y_true = pd.Series(
+        _compute_marginal_kl_vector(prior_series.values.astype(float), q.values.astype(float)),
+        index=groups, dtype=float
+    )
+
+    # trainable set (cap > 0)
+    mask_cand = cap > 0
+    Gc = groups[mask_cand.values]
+    if len(Gc) == 0:
+        return df.iloc[0:0].copy()
+
+    # ---- features + scaling ----
+    X_all = _group_features_default(groups, q, cap, prior_series)
+    X = X_all.loc[Gc]
+    y = y_true.loc[Gc]
+
+    scaler = StandardScaler(with_mean=True, with_std=True)
+    Xs = scaler.fit_transform(X.values)
+
+    # ---- fit LASSO ----
+    if lasso_alpha is None:
+        model = LassoCV(
+            cv=lasso_cv_folds,
+            random_state=_rint(rng),
+            max_iter=200_000,
+            tol=1e-4,
+            n_jobs=None
+        )
+    else:
+        model = Lasso(alpha=float(lasso_alpha), max_iter=200_000, tol=1e-4)
+
+    model.fit(Xs, y.values)
+    y_hat = pd.Series(model.predict(Xs), index=Gc)
+
+    # ---- quantile-bin predictions => supergroups ----
+    B = max(2, min(cluster_bins, len(Gc)))
+    jitter = pd.Series(rng.normal(0, 1e-12, size=len(y_hat)), index=y_hat.index)
+    ranks = (y_hat + jitter).rank(method="first", pct=True)
+    bins = np.minimum((ranks * B).astype(int), B - 1)  # 0..B-1
+    cluster_ids = pd.Series(bins.values, index=Gc, name="cluster")
+
+    # member rows (for later fan-out and sampling)
+    members = (pd.DataFrame({
+        "group": Gc,
+        "cluster": cluster_ids.values,
+        "q": q.loc[Gc].values,
+        "cap": cap.loc[Gc].values
+    }).sort_values(["cluster", "group"]).reset_index(drop=True))
+
+    if isinstance(state, dict):
+        week = state.get("week_id")
+        scen = state.get("scenario_id")
+        algo = state.get("algo_name")
+
+        log_df = members.copy()
+        log_df.insert(0, "week", week)
+        log_df.insert(1, "scenario", scen)
+        log_df.insert(2, "algorithm", algo)
+
+        history = state.setdefault("cluster_history", [])
+        history.append(log_df)
+
+    # aggregated supergroup stats
+    agg = members.groupby("cluster", sort=True).agg({
+        "q": "sum",
+        "cap": "sum",
+    }).rename_axis("cluster").reset_index()
+
+    # filter clusters with zero cap
+    agg = agg[agg["cap"] > 0].reset_index(drop=True)
+    if agg.empty:
+        return df.iloc[0:0].copy()
+
+    # ---- 1) allocate budget across supergroups (Hamilton) ----
+    qS = pd.Series(agg["q"].to_numpy(float), index=agg["cluster"])
+    capS = pd.Series(agg["cap"].to_numpy(int), index=agg["cluster"])
+
+    allocS = _largest_remainder_alloc(qS, int(min(batch_size, int(capS.sum()))), capS, rng)
+
+    # ---- 2) within each supergroup, allocate to member groups ----
+    parts = []
+    for cid, kS in allocS.items():
+        if kS <= 0:
+            continue
+        sub = members[members["cluster"] == cid].copy()
+        if sub.empty:
+            continue
+
+        if intra_mode == "q":
+            weights = pd.Series(sub["q"].to_numpy(float), index=sub["group"])
+        else:  # "cap_q" (default)
+            w = sub["cap"].clip(lower=0).to_numpy(float) * np.maximum(sub["q"].to_numpy(float), 0.0)
+            weights = pd.Series(w, index=sub["group"])
+
+        caps_g = pd.Series(sub["cap"].to_numpy(int), index=sub["group"])
+        allocG = _largest_remainder_alloc(weights, int(kS), caps_g, rng)
+
+        # materialize samples per member group
+        for g, k in allocG.items():
+            if k <= 0:
+                continue
+            pool_g = df[df["group"] == g]
+            if len(pool_g) == 0:
+                continue
+            take = min(int(k), len(pool_g))
+            parts.append(pool_g.sample(take, replace=False, random_state=_rint(rng)))
+
+    out = pd.concat(parts) if parts else df.iloc[0:0].copy()
+
+    # ---- 3) if shortfall, optionally fill uniformly from remaining pool ----
+    shortfall = int(batch_size - len(out))
+    # week_id = (state or {}).get("week_id", "?")
+    # print(
+    #     f"[LASSO-Stratified] week={week_id} leftovers_for_uniform={max(shortfall, 0)} "
+    #     f"(batch={batch_size}, stratified={len(out)})"
+    # )
+    if shortfall > 0 and fill_shortfall_uniform:
+        remaining_pool = df.drop(index=out.index, errors="ignore")
+        if not remaining_pool.empty:
+            more = remaining_pool.sample(min(shortfall, len(remaining_pool)),
+                                         replace=False, random_state=_rint(rng))
+            out = pd.concat([out, more], ignore_index=False)
+
+    # log alpha used (optional parity with greedy)
+    try:
+        alpha_used = float(getattr(model, "alpha_", getattr(model, "alpha", float("nan"))))
+    except Exception:
+        alpha_used = float("nan")
+
+
+    return out.reset_index(drop=True)
 
 # mapping used by the driver
 ALGORITHMS = {
@@ -849,5 +1115,6 @@ ALGORITHMS = {
     "RL":   lambda df, td, bs, mpg, prior, state, rng: gittins_ucb_sampler(
         df, td, bs, mpg, state.setdefault("pulls", {}), state.setdefault("rewards", {}), prior, rng
     ),
-    "Fast Greedy" : lasso_clustered_vecgreedy_sampler,
+    "LASSO-Greedy" : lasso_clustered_vecgreedy_sampler,
+    "LASSO-Stratified": lasso_clustered_stratified_sampler,
 }
