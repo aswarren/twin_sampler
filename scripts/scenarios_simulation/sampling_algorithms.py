@@ -945,7 +945,7 @@ def lasso_clustered_stratified_sampler(
         return df.iloc[0:0].copy()
 
     state = state or {}
-    max_super = int(state.get("max_supergroups", 500))
+    max_super = int(state.get("max_supergroups", 1500))
     cluster_bins = int(state.get("cluster_bins", max_super))
     lasso_alpha = state.get("lasso_alpha", None)
     lasso_cv_folds = int(state.get("lasso_cv_folds", 5))
