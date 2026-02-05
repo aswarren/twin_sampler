@@ -426,7 +426,7 @@ def main():
     if args.output_all_events:
         print("--- Processing and saving all potential events (pre-ascertainment simulation) ---")
         formatted_events_df = format_final_linelist(preprocessed_events_df)
-        all_events_path = f"{base_output_path}_allinfections.csv.xz"
+        all_events_path = f"{base_output_path}_allevents.csv.xz"
         formatted_events_df.to_csv(all_events_path, index=False, compression='xz')
         print(f"Wrote {len(formatted_events_df):,} potential event rows to {all_events_path}")
 
