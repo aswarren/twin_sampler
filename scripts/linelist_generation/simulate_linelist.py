@@ -240,7 +240,7 @@ def format_final_linelist(
     # It must match the prior output's columns.
     final_column_order = [
         'virus', 'region', 'country', 'division', 'divisionExposure', 'date', 'strain',
-        'sim_pid', 'sim_tick', 'sex', 'county', 'latitude', 'longitude', 'latino',
+        'sim_pid', 'contact_pid','sim_tick', 'sex', 'county', 'latitude', 'longitude', 'latino',
         'race', 'smh_race', 'age_group',
         'variant_label', 'component_id', # <-- NEWLY ADDED COLUMNS
         'county_fips', 'hid', 'occupation_socp',
