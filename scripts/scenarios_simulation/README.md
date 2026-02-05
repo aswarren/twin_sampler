@@ -22,12 +22,15 @@ It loads a synthetic linelist and population file, runs all 8 scenarios in one g
 # Run similation with:
 ```bash
 python3 run_all_scenarios.py \
-  --linelist epihiper_batch_1_0.25_replicate_0.output.csv.gz_linelist.csv.xz \
+  --linelist ../../debug_run.csv \
   --population ../../va_persontrait_epihiper.txt \
-  --infections epihiper_batch_1_0.25_replicate_0.output.gz_linelist_allevents.csv.xz \
+  --infections ../../debug_run_allevents.csv.xz \
   --outdir ./result \
-  --batch-size 1000 \
+  --batch-size 100 \
   --no-replacement \
   --seed 42 \
-  --algorithms "surs", "greedy", "stratified" \
-  --stratifiers "age", "race", "county", "sex"
+  --algorithms "surs", "stratified", "LASSO-Greedy", "LASSO-Stratified" \
+  --stratifiers "age", "race", "county", "sex" \
+  --save-samples
+
+python3 plot_kl_uncertainty.py --root scenario_runs --outdir result_graphs
