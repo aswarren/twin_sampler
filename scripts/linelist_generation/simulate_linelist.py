@@ -57,6 +57,9 @@ def process_epihiper(
     """
     print("--- Starting EpiHiper Processing (Model B: First Ascertained Event) ---")
 
+    #0.5 Setup contact_pid for all event instead of just E
+    exposures_df = events_df.loc[events_df['contact_pid'] != -1, ['tick', 'pid', 'contact_pid']]
+
     # 1. Filter for relevant ascertainable infectious states
     initial_count = len(events_df)
     events_df = events_df[events_df['exit_state'].str.startswith(prefix_filter)].copy()
@@ -66,6 +69,21 @@ def process_epihiper(
         print("Warning: No relevant ascertainable events found after filtering.")
         return pd.DataFrame()
     
+    # We drop the empty contact_pid from the ascertainable events
+    if 'contact_pid' in events_df.columns:
+        events_df = events_df.drop(columns=['contact_pid'])
+    
+    events_df = pd.merge_asof(
+        events_df,
+        exposures_df,
+        on='tick',
+        by='pid',
+        direction='backward', # Look for exposures in the past
+        suffixes=('', '_exposure') # Should not be needed if we dropped contact_pid above
+    )
+    events_df['contact_pid'] = events_df['contact_pid'].fillna(-1).astype(int)
+
+
     # 2. Load decoration data
     print(f"Loading persontrait data from {persontrait_path}...")
     person_df = pd.read_csv(persontrait_path,skiprows=1)

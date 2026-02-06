@@ -6,7 +6,12 @@ from scipy.optimize import linear_sum_assignment
 from sklearn.preprocessing import minmax_scale
 
 # --- Graph and Component Functions (from original script) ---
-def create_graph_classic(infection_events_df):
+def create_graph_classic(epihiper_df):
+    
+    print("Step 1: Identifying infection events and transmission components in simulation...")
+    # Filter for infection events
+    infection_events_df = epihiper_df[epihiper_df['exit_state'].str.startswith('E')].copy()
+
     # Ensure PIDs are converted to float IDs using the tick value
     if not infection_events_df.empty:
         #as int
@@ -53,9 +58,8 @@ def create_graph_classic(infection_events_df):
     return G_full 
 
 
-def create_component_table(infection_df):
-    G_full = create_graph_classic(infection_df)
-    full_cascade_components = list(nx.weakly_connected_components(G_full))
+def create_component_table(infection_graph):
+    full_cascade_components = list(nx.weakly_connected_components(infection_graph))
     #create table with pid, tick, component_id
     component_data = []
     for i, component in enumerate(full_cascade_components):
@@ -153,12 +157,11 @@ def create_variant_labels(epihiper_df, schedule_df, mode):
     Processes epihiper simulation, identifies components, and assigns variant labels
     based on a real-world importation schedule.
     """
-    print("Step 1: Identifying infection events and transmission components in simulation...")
-    # Filter for infection events
-    infection_df = epihiper_df[epihiper_df['exit_state'].str.startswith('E')].copy()
-    
+
+    infection_graph = create_graph_classic(epihiper_df)
     # Create graph and get component IDs
-    component_df = create_component_table(infection_df)
+    component_df = create_component_table(infection_graph)
+    infection_df = epihiper_df[epihiper_df['exit_state'].str.startswith('E')].copy()
     infection_df['alias_pid'] = (infection_df['pid'].astype(str) + '.' + infection_df['tick'].astype(str))
     # Merge component IDs back into the infection data
     merged_df = pd.merge(infection_df, component_df, on='alias_pid', how='left')
@@ -206,28 +209,50 @@ def create_variant_labels(epihiper_df, schedule_df, mode):
     # Fill any unassigned components (if sim has more components than real imports)
     component_summary['variant_label'].fillna('unassigned', inplace=True)
     
+    #create alias_pid for epihiper_df
+    epihiper_df['alias_pid'] = (epihiper_df['pid'].astype(str) + '.' + epihiper_df['tick'].astype(str))
+
     # Merge the final labels into the full infection dataframe
     final_df = pd.merge(merged_df, component_summary[['component_id', 'variant_label']], on='component_id', how='left')
     
     # propagate component_id and variant_label.
-    #create alias_pid for epihiper_df
-    epihiper_df['alias_pid'] = (epihiper_df['pid'].astype(str) + '.' + epihiper_df['tick'].astype(str))
-    # link variant_label to every event in the full epihiper_df via pid
-    pid_to_label = final_df.set_index('alias_pid')['variant_label'].to_dict()
-    pid_to_component = final_df.set_index('alias_pid')['component_id'].to_dict()
 
-    epihiper_df['variant_label'] = epihiper_df['alias_pid'].map(pid_to_label)
-    epihiper_df['component_id'] = epihiper_df['alias_pid'].map(pid_to_component)
+    # 1. Prepare the Source of Truth
+    # We need a dataframe of just the "Labeled Events" sorted by time.
+    # Assuming final_df contains the events where the label was established.
     
-    # Forward fill the labels for each person's timeline
-    #check if epihiper_df is sorted by only tick, prefer to keep it in orginal order
+    label_source = final_df[['tick', 'pid', 'component_id', 'variant_label']].copy()
+    label_source = label_source.sort_values('tick')
+
+    # 2. Prepare the Target (Full Simulation)
+    # merge_asof requires the left dataframe (epihiper_df) to be sorted by tick
     if not epihiper_df['tick'].is_monotonic_increasing:
-        print("Warning: epihiper_df is not sorted by 'tick'. Sorting now.")
-        epihiper_df.sort_values(['tick'], inplace=True)
-    epihiper_df['variant_label'] = epihiper_df.groupby('pid')['variant_label'].ffill()
-    epihiper_df['variant_label'].fillna('background', inplace=True) # Label non-infected people
-    epihiper_df['component_id'] = epihiper_df.groupby('pid')['component_id'].ffill()
-    epihiper_df['component_id'].fillna(-1, inplace=True) # Label non-infected people
+        print("Sorting epihiper_df by tick for label propagation...")
+        epihiper_df.sort_values('tick', inplace=True)
+
+    # 3. Propagate Labels (The Replacement Logic)
+    # This replaces BOTH the .map() and the .groupby().ffill()
+    # Logic: For every row in epihiper_df, look backwards to find the 
+    # most recent record for this PID in label_source.
+    print("Propagating variant labels using time-aware merge...")
+    
+    # We drop existing columns if they exist to avoid suffix conflicts (_x, _y)
+    cols_to_drop = [c for c in ['component_id', 'variant_label'] if c in epihiper_df.columns]
+    if cols_to_drop:
+        epihiper_df.drop(columns=cols_to_drop, inplace=True)
+
+    epihiper_df = pd.merge_asof(
+        epihiper_df,
+        label_source,
+        on='tick',
+        by='pid',
+        direction='backward'
+    )
+
+    # 4. Fill Background/Unlabeled
+    # Anyone who hasn't had a labeled event yet gets the default
+    epihiper_df['variant_label'] = epihiper_df['variant_label'].fillna('background')
+    epihiper_df['component_id'] = epihiper_df['component_id'].fillna(-1).astype(int)
 
     return epihiper_df
 
