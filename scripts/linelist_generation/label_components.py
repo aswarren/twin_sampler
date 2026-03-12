@@ -57,6 +57,54 @@ def create_graph_classic(epihiper_df):
         G_full.add_edges_from(edges)
     return G_full 
 
+import networkx as nx
+import pandas as pd
+
+def calculate_Re(infection_graph: nx.DiGraph, infection_df: pd.DataFrame = None, time_col: str = 'tick'):
+    """
+    Calculates the effective reproduction number (R_e) from the transmission graph.
+    
+    Args:
+        infection_graph: NetworkX DiGraph representing transmissions. Nodes should be 'alias_pid'.
+        infection_df: A DataFrame of the initial infection events (the 'E' states). 
+                      Required to calculate time-varying R_e(t).
+        time_col: The column in the dataframe representing time (e.g., 'tick' or 'date').
+        
+    Returns:
+        overall_Re (float): The average R_e for the entire simulation.
+        Re_over_time (pd.Series): The average R_e grouped by the infector's time of infection.
+                                  Returns None if infection_df is not provided.
+    """
+    # 1. Calculate overall R_e
+    # This is the average out-degree across all infected individuals in the graph.
+    out_degrees = dict(infection_graph.out_degree())
+    
+    if len(out_degrees) == 0:
+        return 0.0, None
+        
+    overall_Re = sum(out_degrees.values()) / len(out_degrees)
+    print(f"Overall Epidemic R_e: {overall_Re:.3f}")
+    
+    # 2. Calculate time-varying R_e(t)
+    Re_over_time = None
+    if infection_df is not None:
+        print(f"Calculating time-varying R_e based on '{time_col}'...")
+        
+        # Convert the out-degree dictionary to a DataFrame
+        degree_df = pd.DataFrame(list(out_degrees.items()), columns=['alias_pid', 'out_degree'])
+        
+        # Ensure the infection_df has the alias_pid to join on
+        df_copy = infection_df.copy()
+        if 'alias_pid' not in df_copy.columns:
+            df_copy['alias_pid'] = df_copy['pid'].astype(str) + '.' + df_copy['tick'].astype(str)
+            
+        # Merge the out-degree (secondary infections) back onto the infection events
+        merged = pd.merge(df_copy, degree_df, on='alias_pid', how='inner')
+        
+        # Group by the time the *infector* was exposed, and average their secondary infections
+        Re_over_time = merged.groupby(time_col)['out_degree'].mean()
+        
+    return overall_Re, Re_over_time
 
 def create_component_table(infection_graph):
     full_cascade_components = list(nx.weakly_connected_components(infection_graph))
