@@ -10,10 +10,29 @@ def main():
     parser = argparse.ArgumentParser(description="Calculate overall and time-varying Re from EpiHiper output.")
     parser.add_argument("--epihiper", required=True, help="Path to raw EpiHiper output.csv.gz")
     parser.add_argument("--out", required=True, help="Output path for the Re_over_time.csv file")
+    
+    # NEW ARGUMENTS FOR FILTERING
+    parser.add_argument("--variant", type=str, default=None, help="Specific variant number to filter for (e.g., '2' for E2, I2)")
+    parser.add_argument("--start_tick", type=int, default=None, help="Only consider infections occurring on or after this tick")
+    parser.add_argument("--stop_tick", type=int, default=None, help="Only consider infections occurring on or before this tick")
+    
     args = parser.parse_args()
 
     print(f"Loading EpiHiper data from {args.epihiper}...")
     epihiper_df = pd.read_csv(args.epihiper)
+
+    # 1. FILTER BY TIME (if requested)
+    if args.start_tick is not None:
+        epihiper_df = epihiper_df[epihiper_df['tick'] >= args.start_tick]
+    if args.stop_tick is not None:
+        epihiper_df = epihiper_df[epihiper_df['tick'] <= args.stop_tick]
+
+    # 2. FILTER BY VARIANT (if requested)
+    if args.variant is not None:
+        print(f"Filtering for Variant {args.variant}...")
+        # Keep only rows where the exit_state contains the variant number (e.g., '2')
+        # This assumes your states are strictly named like 'E2_a', 'I2_s', etc.
+        epihiper_df = epihiper_df[epihiper_df['exit_state'].str.contains(f"{args.variant}_")]
 
     print("Creating infection graph...")
     # This function expects the full epihiper output to trace contact_pid -> pid
@@ -46,3 +65,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
