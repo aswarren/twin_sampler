@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 from scenarios_config import (
     SCENARIOS,
@@ -155,6 +156,128 @@ def _normalize_stratifiers(tokens: list[str]) -> list[str]:
         if c not in seen:
             ordered.append(c); seen.add(c)
     return ordered
+
+# --------- infection tree helpers ----------
+def build_undirected_adj(df, pid_col="sim_pid", contact_col="contact_pid"):
+    """
+    Builds an adjacency list for the entire transmission network (undirected).
+    Returns: dict {pid: [neighbor_pids]}
+    """
+    adj = {}
+    
+    # Ensure strings
+    df[pid_col] = df[pid_col].astype(str)
+    df[contact_col] = df[contact_col].astype(str)
+    
+    for _, row in df.iterrows():
+        u = row[pid_col]
+        v = row[contact_col]
+        
+        # Initialize
+        if u not in adj: adj[u] = []
+        
+        # Valid edge check (ignore -1 or self-loops)
+        if v and v != "-1" and v != "nan" and v != u:
+            if v not in adj: adj[v] = []
+            
+            # Add undirected edge
+            adj[u].append(v)
+            adj[v].append(u)
+            
+    return adj
+
+def calculate_coverage_score(target_population_set, sampled_set, adj_graph):
+    """
+    Computes Coverage Score = (1 / |Pt|) * Sum(1 / (d(u, S) + 1))
+    using Multi-Source BFS.
+    """
+    if not target_population_set:
+        return 0.0
+    
+    if not sampled_set:
+        return 0.0 # d(u, S) is inf, 1/(inf+1) is 0
+
+    # Multi-Source BFS Initialization
+    queue = deque()
+    distances = {} # Stores d(u, S)
+    
+    # Initialize with all sampled nodes that exist in the graph
+    for s in sampled_set:
+        if s in adj_graph: 
+            distances[s] = 0
+            # FIX: Append tuple (node, distance)
+            queue.append((s, 0))
+        # Note: If s is not in adj_graph (isolated), it doesn't help reach others, 
+        # but it has distance 0 to itself. This is handled implicitly if s in target_population_set.
+        # However, for the BFS to run, we only queue valid graph nodes.
+
+    # BFS
+    while queue:
+        # FIX: Now this unpacks correctly
+        current, dist = queue.popleft()
+        
+        # Explore neighbors
+        if current in adj_graph:
+            for neighbor in adj_graph[current]:
+                if neighbor not in distances:
+                    distances[neighbor] = dist + 1
+                    # FIX: Append tuple (neighbor, new_distance)
+                    queue.append((neighbor, dist + 1))
+    
+    # Calculate Score
+    total_score = 0.0
+    
+    for u in target_population_set:
+        # If u was visited, we have a distance.
+        if u in distances:
+            d = distances[u]
+            total_score += 1.0 / (d + 1.0)
+        # If u corresponds to a sampled node that was isolated (not in adj_graph),
+        # its distance to S is 0 (since it IS in S).
+        elif u in sampled_set:
+             total_score += 1.0 # 1 / (0 + 1)
+        else:
+            # d(u, S) = infinity -> term is 0
+            total_score += 0.0
+            
+    return total_score / len(target_population_set)
+
+def precompute_component_sizes(adj_graph, all_pids):
+    """
+    Returns a dict {pid: component_size} for every pid in the graph.
+    Uses BFS/DFS to find connected components.
+    """
+    pid_to_size = {}
+    visited = set()
+    
+    # Ensure all pids are in the map, defaulting to size 1 if isolated/missing from graph
+    # (Though adj_graph usually contains everyone if built from linelist)
+    for pid in all_pids:
+        if pid not in pid_to_size:
+            pid_to_size[pid] = 1
+
+    for start_node in adj_graph:
+        if start_node not in visited:
+            # Found a new component, traverse it to count size
+            component_nodes = []
+            queue = deque([start_node])
+            visited.add(start_node)
+            component_nodes.append(start_node)
+            
+            while queue:
+                curr = queue.popleft()
+                for nbr in adj_graph.get(curr, []):
+                    if nbr not in visited:
+                        visited.add(nbr)
+                        queue.append(nbr)
+                        component_nodes.append(nbr)
+            
+            # Assign size to all members
+            size = len(component_nodes)
+            for node in component_nodes:
+                pid_to_size[node] = size
+                
+    return pid_to_size
 
 
 # --------- shared helpers ---------
@@ -1298,6 +1421,31 @@ def main():
                         label=SCEN_LABELS.get(scn, f"Scenario {scn}")
                     )
 
+                    for i, v in enumerate(ys, start=1):
+                        kl_rows.append({
+                            "run_id": run_id,
+                            "linelist_id": linelist_id,
+                            "algorithm": algo,
+                            "scenario_id": scn,
+                            "scenario_label": SCEN_LABELS.get(scn, f"Scenario {scn}"),
+                            "eval_type": "G_weekly_component_coverage",
+                            "roll_window": None,
+                            "week": i,
+                            # convention: KL column stores the metric; here v = fraction coverage
+                            "kl": float(v),
+                        })
+
+                    # --- Store AUC for coverage series (lower is worse coverage, but consistent ranking) ---
+                    auc_rows.append({
+                        "eval_type": "G_weekly_component_coverage",
+                        "algorithm": algo,
+                        "scenario_id": scn,
+                        "scenario_label": SCEN_LABELS.get(scn, f"Scenario {scn}"),
+                        "weeks": len(ys),
+                        "auc": series_auc(ys),
+                    })
+
+
                 ax.grid(True, linestyle="--", alpha=0.6)
                 ax.legend(ncol=4, fontsize=8)
                 ax.set_xlim(left=0.9)
@@ -1379,6 +1527,31 @@ def main():
                         label=SCEN_LABELS.get(scn, f"Scenario {scn}")
                     )
 
+                    # --- Store per-week rolling component coverage rows ---
+                    for i, v in enumerate(ys, start=1):
+                        kl_rows.append({
+                            "run_id": run_id,
+                            "linelist_id": linelist_id,
+                            "algorithm": algo,
+                            "scenario_id": scn,
+                            "scenario_label": SCEN_LABELS.get(scn, f"Scenario {scn}"),
+                            "eval_type": "H_rolling_component_coverage",
+                            "roll_window": 4,             # fixed window in your code
+                            "week": i,
+                            "kl": float(v),
+                        })
+
+                    # --- Store AUC for the rolling series ---
+                    auc_rows.append({
+                        "eval_type": "H_rolling_component_coverage",
+                        "algorithm": algo,
+                        "scenario_id": scn,
+                        "scenario_label": SCEN_LABELS.get(scn, f"Scenario {scn}"),
+                        "weeks": len(ys),
+                        "auc": series_auc(ys),
+                    })
+
+
                 ax.grid(True, linestyle="--", alpha=0.6)
                 ax.legend(ncol=4, fontsize=8)
                 ax.set_xlim(left=0.9)
@@ -1389,16 +1562,392 @@ def main():
             print(f"Saved: {outH}")
             plt.close(figH)
 
-        else:
-            print("Column 'component_id' not found in line list; skipping component coverage plots.")
+        # =================== FIGURES I, J, K, L: Coverage by Tree Size ===================
+        if "contact_pid" in line_df.columns:
+            print("Computing Tree Coverage Scores for various sizes (Figs I-L)...")
+            
+            # 1. Build Graph & Precompute Sizes
+            adj_graph = build_undirected_adj(line_df, pid_col="sim_pid", contact_col="contact_pid")
+            all_pids_set = set(line_df["sim_pid"].astype(str))
+            pid_sizes = precompute_component_sizes(adj_graph, all_pids_set)
+            
+            # Define thresholds and Figure labels
+            # (Threshold 0 = Figure I "All", 10 = Figure J, 100 = Figure K, 1000 = Figure L)
+            THRESHOLDS = [
+                (0,    "I", "All Sizes"),
+                (10,   "J", "> 10"),
+                (100,  "K", "> 100"),
+                (1000, "L", "> 1000")
+            ]
+            
+            # Structure: results[threshold][algo][scenario] = [scores per week]
+            results_by_thresh = {t: {algo: {} for algo in algo_list} for t, _, _ in THRESHOLDS}
 
+            # --- Compute Scores ---
+            for scfg in SCENARIOS:
+                sid = scfg["id"]
+                weekly_samples_scen = all_weekly_samples.get(sid, {})
+                if not weekly_samples_scen:
+                    continue
+
+                for algo in algo_list:
+                    weeks_list = weekly_samples_scen.get(algo, [])
+                    if not weeks_list:
+                        continue
+
+                    # Consolidate samples
+                    all_samples_df = pd.concat(weeks_list, ignore_index=True)
+                    if args.date_field in all_samples_df.columns:
+                        all_samples_df[args.date_field] = pd.to_datetime(all_samples_df[args.date_field])
+
+                    # Prepare lists for each threshold
+                    series_map = {t: [] for t, _, _ in THRESHOLDS}
+                    
+                    cur_date = start_date
+                    for w_idx in range(len(weekly_ll_hist)):
+                        week_end_date = cur_date + timedelta(days=6)
+                        
+                        # 1. Identify S (Samples up to now)
+                        mask_sample = all_samples_df[args.date_field] <= week_end_date
+                        s_col = "sim_pid" if "sim_pid" in all_samples_df.columns else "pid"
+                        s_ids = set(all_samples_df.loc[mask_sample, s_col].astype(str))
+                        
+                        # 2. Identify Full Pt (Population up to now)
+                        mask_pop = line_df[args.date_field] <= week_end_date
+                        pt_ids_all = set(line_df.loc[mask_pop, "sim_pid"].astype(str))
+                        
+                        # 3. Calculate Score for each Threshold
+                        for thresh, _, _ in THRESHOLDS:
+                            # Filter Pt based on component size
+                            # (We only care about covering people in BIG trees)
+                            pt_ids_filtered = {
+                                u for u in pt_ids_all 
+                                if pid_sizes.get(u, 1) > thresh
+                            }
+                            
+                            score = calculate_coverage_score(pt_ids_filtered, s_ids, adj_graph)
+                            series_map[thresh].append(score)
+                        
+                        cur_date += timedelta(weeks=1)
+
+                    # Save to main results dict
+                    for thresh, _, _ in THRESHOLDS:
+                        results_by_thresh[thresh][algo][sid] = series_map[thresh]
+
+            # --- Generate Plots I, J, K, L ---
+            for thresh, letter, label_suffix in THRESHOLDS:
+                print(f"Generating Figure {letter} (Tree Size {label_suffix})...")
+                
+                fig, axes = _axes_for_algos(n_algo)
+                for ax, algo in zip(axes, algo_list):
+                    ax.set_title(f"{algo}: Coverage ({label_suffix})")
+                    ax.set_xlabel("Week")
+                    ax.set_ylabel("Score" if ax is axes[0] else "")
+
+                    for scn in scenario_ids:
+                        ys = results_by_thresh[thresh].get(algo, {}).get(scn, [])
+                        if not ys:
+                            continue
+                        x = list(range(1, len(ys) + 1))
+                        
+                        ax.plot(
+                            x, ys,
+                            marker=marker_map.get(scn, "o"),
+                            linestyle="-",
+                            label=SCEN_LABELS.get(scn, f"Scenario {scn}")
+                        )
+
+                        # Store Metrics (Naming convention: Letter_Label)
+                        eval_type = f"{letter}_coverage_size_{thresh}"
+                        for i, v in enumerate(ys, start=1):
+                            kl_rows.append({
+                                "run_id": run_id,
+                                "linelist_id": linelist_id,
+                                "algorithm": algo,
+                                "scenario_id": scn,
+                                "scenario_label": SCEN_LABELS.get(scn, f"Scenario {scn}"),
+                                "eval_type": eval_type,
+                                "roll_window": None,
+                                "week": i,
+                                "kl": float(v),
+                            })
+                        
+                        # Store AUC
+                        auc_rows.append({
+                            "eval_type": eval_type,
+                            "algorithm": algo,
+                            "scenario_id": scn,
+                            "scenario_label": SCEN_LABELS.get(scn, f"Scenario {scn}"),
+                            "weeks": len(ys),
+                            "auc": series_auc(ys),
+                        })
+
+                    ax.grid(True, linestyle="--", alpha=0.6)
+                    ax.legend(ncol=4, fontsize=8)
+                    ax.set_xlim(left=0.9)
+                    ax.set_ylim(0, 1.05)
+
+                fig.tight_layout()
+                out_path = outdir / f"{letter}_coverage_size_gt_{thresh}_1xN.png"
+                plt.savefig(out_path, dpi=150)
+                print(f"Saved: {out_path}")
+                plt.close(fig)
+
+        # =================== FIGURE M: 8-Week Rolling Tree Coverage ===================
+        if "contact_pid" in line_df.columns:
+            print("Computing 8-Week Rolling Tree Coverage Score (Figure M)...")
+            
+            ROLL_WIN_TREE = 8
+            rolling_tree_scores = {algo: {} for algo in algo_list}
+
+            # If adj_graph isn't already built in your scope from the previous block, build it:
+            if 'adj_graph' not in locals():
+                adj_graph = build_undirected_adj(line_df, pid_col="sim_pid", contact_col="contact_pid")
+
+            for scfg in SCENARIOS:
+                sid = scfg["id"]
+                weekly_samples_scen = all_weekly_samples.get(sid, {})
+                if not weekly_samples_scen:
+                    continue
+
+                for algo in algo_list:
+                    weeks_list = weekly_samples_scen.get(algo, [])
+                    if not weeks_list:
+                        continue
+
+                    # Consolidate all samples
+                    all_samples_df = pd.concat(weeks_list, ignore_index=True)
+                    if args.date_field in all_samples_df.columns:
+                        all_samples_df[args.date_field] = pd.to_datetime(all_samples_df[args.date_field])
+
+                    score_series = []
+                    
+                    for w_idx in range(len(weekly_ll_hist)):
+                        # Define the 8-week rolling window dates
+                        start_idx = max(0, w_idx - ROLL_WIN_TREE + 1)
+                        window_start_date = start_date + timedelta(weeks=start_idx)
+                        window_end_date = start_date + timedelta(weeks=w_idx) + timedelta(days=6)
+                        
+                        # 1. Identify Pt (Population infected WITHIN this 8-week window)
+                        mask_pop = (
+                            (line_df[args.date_field] >= window_start_date) & 
+                            (line_df[args.date_field] <= window_end_date)
+                        )
+                        pt_ids_window = set(line_df.loc[mask_pop, "sim_pid"].astype(str))
+                        
+                        # 2. Identify S (Samples collected WITHIN this 8-week window)
+                        mask_sample = (
+                            (all_samples_df[args.date_field] >= window_start_date) & 
+                            (all_samples_df[args.date_field] <= window_end_date)
+                        )
+                        s_col = "sim_pid" if "sim_pid" in all_samples_df.columns else "pid"
+                        s_ids_window = set(all_samples_df.loc[mask_sample, s_col].astype(str))
+                        
+                        # 3. Calculate Score
+                        score = calculate_coverage_score(pt_ids_window, s_ids_window, adj_graph)
+                        score_series.append(score)
+
+                    rolling_tree_scores[algo][sid] = score_series
+
+            # --- Plot Figure M ---
+            figM, axesM = _axes_for_algos(n_algo)
+            for ax, algo in zip(axesM, algo_list):
+                ax.set_title(f"{algo}: 8-Week Rolling Tree Coverage")
+                ax.set_xlabel("Week")
+                ax.set_ylabel("Coverage Score (0-1)" if ax is axesM[0] else "")
+
+                for scn in scenario_ids:
+                    ys = rolling_tree_scores.get(algo, {}).get(scn, [])
+                    if not ys:
+                        continue
+                    x = list(range(1, len(ys) + 1))
+                    
+                    ax.plot(
+                        x, ys,
+                        marker=marker_map.get(scn, "o"),
+                        linestyle="-",
+                        label=SCEN_LABELS.get(scn, f"Scenario {scn}")
+                    )
+
+                    # Store Metrics
+                    for i, v in enumerate(ys, start=1):
+                        kl_rows.append({
+                            "run_id": run_id,
+                            "linelist_id": linelist_id,
+                            "algorithm": algo,
+                            "scenario_id": scn,
+                            "scenario_label": SCEN_LABELS.get(scn, f"Scenario {scn}"),
+                            "eval_type": "M_8_week_rolling_tree_coverage",
+                            "roll_window": 8,
+                            "week": i,
+                            "kl": float(v), # Score mapped to KL column for CSV consistency
+                        })
+                    
+                    # Store AUC
+                    auc_rows.append({
+                        "eval_type": "M_8_week_rolling_tree_coverage",
+                        "algorithm": algo,
+                        "scenario_id": scn,
+                        "scenario_label": SCEN_LABELS.get(scn, f"Scenario {scn}"),
+                        "weeks": len(ys),
+                        "auc": series_auc(ys),
+                    })
+
+                ax.grid(True, linestyle="--", alpha=0.6)
+                ax.legend(ncol=4, fontsize=8)
+                ax.set_xlim(left=0.9)
+                ax.set_ylim(0, 1.05)
+
+            figM.tight_layout()
+            outM = outdir / "M_tree_coverage_rolling8_1xN.png"
+            plt.savefig(outM, dpi=150)
+            print(f"Saved: {outM}")
+            plt.close(figM)
+
+        # =================== FIGURE N: Longitudinal Equity Heatmap (By Age Group) ===================
+        if "contact_pid" in line_df.columns and "age_group" in line_df.columns:
+            print("Computing Longitudinal Equity Heatmaps by Age Group (Figure N)...")
+
+            # 1. Get unique, valid age groups from the linelist
+            age_groups = sorted([ag for ag in line_df["age_group"].dropna().unique() if str(ag) != "nan"])
+            
+            # Data structure: age_cov[age_group][algo][scenario_id] = [weekly_scores]
+            age_cov = {ag: {algo: {} for algo in algo_list} for ag in age_groups}
+
+            # Ensure adj_graph is available
+            if 'adj_graph' not in locals():
+                adj_graph = build_undirected_adj(line_df, pid_col="sim_pid", contact_col="contact_pid")
+
+            # --- Compute Scores ---
+            for scfg in SCENARIOS:
+                sid = scfg["id"]
+                weekly_samples_scen = all_weekly_samples.get(sid, {})
+                if not weekly_samples_scen:
+                    continue
+
+                for algo in algo_list:
+                    weeks_list = weekly_samples_scen.get(algo, [])
+                    if not weeks_list:
+                        continue
+
+                    all_samples_df = pd.concat(weeks_list, ignore_index=True)
+                    if args.date_field in all_samples_df.columns:
+                        all_samples_df[args.date_field] = pd.to_datetime(all_samples_df[args.date_field])
+
+                    # Prepare tracking lists for this specific algo & scenario
+                    series_map = {ag: [] for ag in age_groups}
+
+                    cur_date = start_date
+                    for w_idx in range(len(weekly_ll_hist)):
+                        week_end_date = cur_date + timedelta(days=6)
+
+                        # Set S: All samples collected up to this week
+                        mask_sample = all_samples_df[args.date_field] <= week_end_date
+                        s_col = "sim_pid" if "sim_pid" in all_samples_df.columns else "pid"
+                        s_ids = set(all_samples_df.loc[mask_sample, s_col].astype(str))
+
+                        # Set Pt Base: All population infected up to this week
+                        mask_pop = line_df[args.date_field] <= week_end_date
+                        pop_this_week = line_df.loc[mask_pop]
+
+                        # Calculate Coverage for EACH Age Group
+                        for ag in age_groups:
+                            # Filter Pt strictly to this age group
+                            pt_ag_ids = set(pop_this_week.loc[pop_this_week["age_group"] == ag, "sim_pid"].astype(str))
+                            
+                            score = calculate_coverage_score(pt_ag_ids, s_ids, adj_graph)
+                            series_map[ag].append(score)
+
+                        cur_date += timedelta(weeks=1)
+
+                    # Save series and log to CSV rows
+                    for ag in age_groups:
+                        age_cov[ag][algo][sid] = series_map[ag]
+                        
+                        # Clean age group name for CSV column
+                        ag_clean_csv = ag.replace(' ', '_').replace('/', '_').replace('(', '').replace(')', '')
+                        eval_type = f"N_equity_{ag_clean_csv}"
+                        
+                        ys = series_map[ag]
+                        
+                        # Log per-week for KL series
+                        for i, v in enumerate(ys, start=1):
+                            kl_rows.append({
+                                "run_id": run_id,
+                                "linelist_id": linelist_id,
+                                "algorithm": algo,
+                                "scenario_id": sid,
+                                "scenario_label": SCEN_LABELS.get(sid, f"Scenario {sid}"),
+                                "eval_type": eval_type,
+                                "roll_window": None,
+                                "week": i,
+                                "kl": float(v), # Score mapped to kl column
+                            })
+                            
+                        # Log AUC for rankings
+                        auc_rows.append({
+                            "eval_type": eval_type,
+                            "algorithm": algo,
+                            "scenario_id": sid,
+                            "scenario_label": SCEN_LABELS.get(sid, f"Scenario {sid}"),
+                            "weeks": len(ys),
+                            "auc": series_auc(ys),
+                        })
+
+            # --- Plot Figure N (5 Separate Heatmaps) ---
+            for ag in age_groups:
+                matrix = []
+                valid_row_labels = []
+                
+                # Build rows: grouped by Algorithm, then Scenario
+                for algo in algo_list:
+                    for sid in scenario_ids:
+                        ys = age_cov[ag][algo].get(sid, [])
+                        if ys:
+                            matrix.append(ys)
+                            valid_row_labels.append(f"{algo} | {SCEN_LABELS.get(sid, f'Scen {sid}')}")
+                
+                if not matrix:
+                    continue
+                    
+                # Convert to DataFrame for Seaborn
+                matrix_df = pd.DataFrame(matrix, index=valid_row_labels, columns=range(1, len(matrix[0]) + 1))
+                
+                figN, axN = plt.subplots(figsize=(12, max(6, len(valid_row_labels) * 0.4)))
+                
+                # Plot Heatmap
+                # RdYlGn places 0.0 (Poor Coverage) as Red and 1.0 (Perfect Coverage) as Green
+                sns.heatmap(
+                    matrix_df, 
+                    cmap="RdYlGn", 
+                    vmin=0.0, 
+                    vmax=1.0, 
+                    ax=axN,
+                    cbar_kws={'label': 'Cumulative Tree Coverage Score (0.0 - 1.0)'}
+                )
+                
+                axN.set_title(f"Longitudinal Equity: {ag}\nHow close is the average {ag} to a sampled individual over time?", fontsize=14)
+                axN.set_xlabel("Week", fontsize=12)
+                axN.set_ylabel("Algorithm | Scenario", fontsize=12)
+                
+                # Add horizontal lines to separate the algorithms visually
+                for i in range(1, len(algo_list)):
+                    axN.axhline(i * len(scenario_ids), color='white', linewidth=2)
+                
+                plt.tight_layout()
+                
+                # Sanitize the age group name for saving to the filesystem
+                ag_clean_file = "".join([c if c.isalnum() else "_" for c in ag]).strip("_")
+                outN = outdir / f"N_equity_heatmap_{ag_clean_file}.png"
+                plt.savefig(outN, dpi=150)
+                print(f"Saved: {outN}")
+                plt.close(figN)
+        else:
+            print("Missing 'contact_pid' or 'age_group' column; skipping Figure N.")
 
     else:
         print("\n--no-plots flag detected. Skipping plot generation.")
-
     
-
-
     # ------------------- Save per-week KL series for uncertainty bands -------------------
     kl_df = pd.DataFrame(kl_rows)
     kl_out = outdir / "KL_series.csv"
@@ -1406,30 +1955,48 @@ def main():
     print(f"Saved KL series: {kl_out}")
 
     # =================== AUC summary CSV (ranked) ===================
-    auc_df = pd.DataFrame(auc_rows)
-    # lower AUC is better
-    auc_df["rank_overall"] = auc_df.groupby("eval_type")["auc"].rank(method="dense", ascending=True)
-    auc_df["rank_within_algo"] = auc_df.groupby(["eval_type", "algorithm"])["auc"].rank(method="dense", ascending=True)
+    if not auc_rows:
+        print("\n[Warning] No AUC data was collected. AUC_rankings.csv will not be created.")
+    else:
+        auc_df = pd.DataFrame(auc_rows)
+        
+        # Check if the expected column exists to prevent the KeyError
+        if "eval_type" in auc_df.columns:
+            # lower AUC is better
+            auc_df["rank_overall"] = auc_df.groupby("eval_type")["auc"].rank(method="dense", ascending=True)
+            auc_df["rank_within_algo"] = auc_df.groupby(["eval_type", "algorithm"])["auc"].rank(method="dense", ascending=True)
 
-    auc_out = outdir / "AUC_rankings.csv"
-    auc_df.sort_values(["eval_type", "rank_overall", "algorithm", "scenario_id"]).to_csv(auc_out, index=False)
-    print(f"\nSaved AUC rankings: {auc_out}")
+            auc_out = outdir / "AUC_rankings.csv"
+            auc_df.sort_values(["eval_type", "rank_overall", "algorithm", "scenario_id"]).to_csv(auc_out, index=False)
+            print(f"\nSaved AUC rankings: {auc_out}")
+
+            # print top results per evaluation to console
+            for et in auc_df["eval_type"].unique():
+                top = (auc_df[auc_df["eval_type"] == et]
+                    .sort_values(["rank_overall", "algorithm", "scenario_id"])
+                    .head(8))
+                print(f"\nTop AUCs for {et} (lower is better):")
+                for _, r in top.iterrows():
+                    print(f"  #{int(r['rank_overall'])}: {r['algorithm']} - {r['scenario_label']} "
+                        f"(AUC={r['auc']:.4f}, weeks={int(r['weeks'])})")
+        else:
+            print("\n[Error] 'eval_type' missing from AUC results. Check metric calculations.")
 
     # print top results per evaluation to console
-    for et in auc_df["eval_type"].unique():
-        top = (auc_df[auc_df["eval_type"] == et]
-               .sort_values(["rank_overall", "algorithm", "scenario_id"])
-               .head(8))
-        print(f"\nTop AUCs for {et} (lower is better):")
-        for _, r in top.iterrows():
-            print(f"  #{int(r['rank_overall'])}: {r['algorithm']} - {r['scenario_label']} "
-                  f"(AUC={r['auc']:.4f}, weeks={int(r['weeks'])})")
+    # for et in auc_df["eval_type"].unique():
+    #     top = (auc_df[auc_df["eval_type"] == et]
+    #            .sort_values(["rank_overall", "algorithm", "scenario_id"])
+    #            .head(8))
+    #     print(f"\nTop AUCs for {et} (lower is better):")
+    #     for _, r in top.iterrows():
+    #         print(f"  #{int(r['rank_overall'])}: {r['algorithm']} - {r['scenario_label']} "
+    #               f"(AUC={r['auc']:.4f}, weeks={int(r['weeks'])})")
 
-    print("\n=== Average running time across 8 scenarios (per algorithm) ===")
-    for algo in ALG.keys():
-        n = max(1, count_algo_runs[algo])
-        avg_secs = total_algo_time[algo] / n
-        print(f"{algo}: {avg_secs:.2f}s on average over {n} scenarios")
+    # print("\n=== Average running time across 8 scenarios (per algorithm) ===")
+    # for algo in ALG.keys():
+    #     n = max(1, count_algo_runs[algo])
+    #     avg_secs = total_algo_time[algo] / n
+    #     print(f"{algo}: {avg_secs:.2f}s on average over {n} scenarios")
 
 
 if __name__ == "__main__":
