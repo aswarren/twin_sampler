@@ -47,6 +47,7 @@ STOP_TICK=397
 
 # The exit states to focus on
 PREFIX_FILTER="[\"A2\", \"P2\", \"I2\", \"dM2\", \"hM2\"]"
+EXPOSED_FILTER="[\"E2\"]"
 
 # A fixed random seed for reproducibility
 SEED=42
@@ -83,6 +84,8 @@ cmd=(
     "${SEED}"
     "--prefix_override"
     "${PREFIX_FILTER}"
+    "--exposed_filter"
+    "${EXPOSED_FILTER}"
     "--output_all_events"
     # --- NEW ARGUMENTS FOR VARIANT LABELING ---
     "--schedule_input"

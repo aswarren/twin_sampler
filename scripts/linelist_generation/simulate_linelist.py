@@ -49,7 +49,8 @@ def process_epihiper(
     rucc_path: str,
     start_date: str,
     start_tick: int,
-    prefix_filter: tuple
+    prefix_filter: tuple,
+    exposed_filter:tuple
 ) -> pd.DataFrame:
     """
     Takes a epihiper dataframe filters it further for
@@ -59,7 +60,7 @@ def process_epihiper(
     print("--- Starting EpiHiper Processing (Model B: First Ascertained Event) ---")
 
     #0.5 Setup contact_pid for all event instead of just E
-    exposures_df = events_df.loc[events_df['contact_pid'] != -1, ['tick', 'pid', 'contact_pid']]
+    exposures_df = epi_df.loc[epi_df['exit_state'].str.startswith(exposed_filter),['tick', 'pid', 'contact_pid']].copy()
     exposures_df['exposure_tick'] = exposures_df['tick']
 
     # 1. Filter for relevant ascertainable infectious states
@@ -359,6 +360,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=None, help="Base random seed for reproducibility.")
     p.add_argument("--n_seeds", type=int, default=1, help="Number of different seeds to generate linelists with.")
     p.add_argument("--prefix_override", type=str, default='["A", "P", "I", "dm", "hM"]', help="A JSON-formatted string of exit_state prefixes to filter")
+    p.add_argument("--exposed_filter", type=str, default='["E"]', help="A JSON-formatted string of exit_state prefixes to filter")
+
         
     return p.parse_args()
 
@@ -371,6 +374,12 @@ def main():
         prefix_list = json.loads(args.prefix_override)
     except (json.JSONDecodeError, ValueError) as e:
         print(f"Error: Invalid format for --prefix_override: {e}")
+        sys.exit(1)
+
+    try:
+        exposed_list = json.loads(args.exposed_filter)
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"Error: Invalid format for --exposed_filter: {e}")
         sys.exit(1)
     
     # --- Step 1: Load Full Simulation Data ---
@@ -431,7 +440,8 @@ def main():
         rucc_path=args.rucc,
         start_date=args.start_date,
         start_tick=args.start_tick,
-        prefix_filter=tuple(prefix_list)
+        prefix_filter=tuple(prefix_list),
+        exposed_filter=tuple(exposed_list)
     )
 
     if events_df is None or events_df.empty:
