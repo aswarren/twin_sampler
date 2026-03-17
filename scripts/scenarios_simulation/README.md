@@ -22,9 +22,9 @@ It loads a synthetic linelist and population file, runs all 8 scenarios in one g
 # Run similation with:
 ```bash
 python3 run_all_scenarios.py \
-  --linelist ../../debug_run.csv \
+  --linelist ../data/linelist.csv.xz \
   --population ../../va_persontrait_epihiper.txt \
-  --infections ../../debug_run_allevents.csv.xz \
+  --infections ../data/linelist_allevents.csv.xz \
   --outdir ./result \
   --batch-size 100 \
   --no-replacement \
@@ -32,5 +32,13 @@ python3 run_all_scenarios.py \
   --algorithms "surs", "stratified", "LASSO-Greedy", "LASSO-Stratified" \
   --stratifiers "age", "race", "county", "sex" \
   --save-samples
+```
+
+# Run replicates test with:
+```bash
+python3 run_replicates.py \
+  --replicates-dir ../data/replicate \
+  --population ../../va_persontrait_epihiper.txt \
+  --no-plots
 
 python3 plot_kl_uncertainty.py --root scenario_runs --outdir result_graphs
