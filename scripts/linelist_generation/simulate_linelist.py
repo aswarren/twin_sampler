@@ -30,6 +30,7 @@ load_ascertainment_parameters,
 preprocess_for_ascertainment,
 compute_ascertainment_probability
 )
+#from place_resolver import resolve_place
 
 try:
     # Assuming label_components.py is in the same directory or accessible via PYTHONPATH
@@ -59,6 +60,7 @@ def process_epihiper(
 
     #0.5 Setup contact_pid for all event instead of just E
     exposures_df = events_df.loc[events_df['contact_pid'] != -1, ['tick', 'pid', 'contact_pid']]
+    exposures_df['exposure_tick'] = exposures_df['tick']
 
     # 1. Filter for relevant ascertainable infectious states
     initial_count = len(events_df)
@@ -112,6 +114,14 @@ def process_epihiper(
     decorated_df['date'] = decorated_df['tick'].apply(
         lambda x: base_date + pd.Timedelta(days=(x - start_tick))
     )
+
+    if 'exposure_tick' in decorated_df.columns:
+        decorated_df['exposure_date'] = decorated_df['exposure_tick'].apply(
+            lambda x: base_date + pd.Timedelta(days=(x - start_tick)) if pd.notna(x) else pd.NaT
+        )
+        # Fill NaN exposure ticks with -1 (for index cases with no prior exposure event)
+        decorated_df['exposure_tick'] = decorated_df['exposure_tick'].fillna(-1).astype(int)
+
     print("--- EpiHiper Processing Complete ---")
     return decorated_df
 
@@ -212,11 +222,17 @@ def format_final_linelist(
     # Construct the 'strain' ID, replicating the logic from genetic_painter.py
     # Requires 'pid', 'tick', and 'date'
     df['year'] = pd.to_datetime(df['date']).dt.year
-    #df['strain'] = df.apply(
-    #    lambda row: f"{country}/{divisionAbbr}-EHip-{int(row['pid'])}.{int(row['tick'])}/{int(row['year'])}",
-    #    axis=1
-    #)
-    df['strain'] = ""
+    df['exposure_year'] = pd.to_datetime(df['exposure_date']).dt.year
+
+    
+    df['strain'] = df.apply(
+        lambda row: f"{country}/{divisionAbbr}-EHip-{int(row['pid'])}.{int(row['exposure_tick'])}/{int(row['exposure_year'])}",
+        axis=1
+    )
+    #drop exposure_year
+    df = df.drop(columns=['exposure_year'], errors='ignore')
+
+    #df['strain'] = ""
 
     # --- Step 2: Transform Data from Codes to Strings ---
 
@@ -246,19 +262,19 @@ def format_final_linelist(
 
     # --- Step 4: Rename Columns for Final Output ---
 
-    rename_map = {
-        'pid': 'sim_pid',
-        'tick': 'sim_tick',
+    #rename_map = {
+    #    'pid': 'sim_pid',
+    #    'tick': 'sim_tick',
         # 'county' column should be loaded from persontrait file
-    }
-    df.rename(columns=rename_map, inplace=True)
+    #}
+    #df.rename(columns=rename_map, inplace=True)
 
     # --- Step 5: Select and Reorder Final Columns ---
     # This list defines the exact schema of the final output file.
     # It must match the prior output's columns.
     final_column_order = [
         'virus', 'region', 'country', 'division', 'divisionExposure', 'date', 'strain',
-        'sim_pid', 'contact_pid','sim_tick', 'sex', 'county', 'latitude', 'longitude', 'latino',
+        'pid', 'contact_pid','tick', 'sex', 'county', 'latitude', 'longitude', 'latino',
         'race', 'smh_race', 'age_group',
         'variant_label', 'component_id', # <-- NEWLY ADDED COLUMNS
         'county_fips', 'hid', 'occupation_socp',
