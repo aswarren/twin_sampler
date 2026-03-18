@@ -60,7 +60,7 @@ def process_epihiper(
     print("--- Starting EpiHiper Processing (Model B: First Ascertained Event) ---")
 
     #0.5 Setup contact_pid for all event instead of just E
-    exposures_df = epi_df.loc[epi_df['exit_state'].str.startswith(exposed_filter),['tick', 'pid', 'contact_pid']].copy()
+    exposures_df = events_df.loc[events_df['exit_state'].str.startswith(exposed_filter),['tick', 'pid', 'contact_pid']].copy()
     exposures_df['exposure_tick'] = exposures_df['tick']
 
     # 1. Filter for relevant ascertainable infectious states
