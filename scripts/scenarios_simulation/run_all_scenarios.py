@@ -519,7 +519,8 @@ SCEN_LABELS = {
 # ----------------- scenario runner (seeded) -----------------
 def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
                      scfg, rng_master, start_date, min_pool, overrides=None,
-                     algorithms: dict[str, callable] = None):
+                     algorithms: dict[str, callable] = None,
+                     history_list: list = None):
     """
     overrides: dict with optional keys:
       - batch_size_fixed: int
@@ -641,12 +642,12 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
 
             # ----- prior groups -----
             if dec_win is None:
-                prior_groups = []
+                prior_groups = list(history_list)
                 for s in weekly_hist[algo_name]:
                     for g, cnt in s.items():
                         prior_groups.extend([g] * int(cnt))
             else:
-                prior_groups = [g for lst in list(recent) for g in lst]
+                prior_groups = list(history_list) + [g for lst in list(recent) for g in lst]
 
             state["week_id"] = week_idx_for_target
             state["scenario_id"] = scfg.get("id")
@@ -755,13 +756,18 @@ def main():
             scfg, rng_master, start_date, args.min_pool, overrides, algorithms=ALG
         )
 
-        # # ---- Save cluster history if present ----
-        # hist = algo_state.get("cluster_history")
-        # if hist:
-        #     out = outdir / f"cluster_history_scen{scfg['id']}_{algo_state.get('algo_name','ALG')}.csv"
-        #     pd.concat(hist, ignore_index=True).to_csv(out, index=False)
-        #     print(f"Saved cluster history to {out}")
-
+        # --- FINAL PRINT FOR THIS SCENARIO ---
+        print(f"--- Results for {scfg['name']} ---")
+        for algo_name, hist_list in weekly_hist.items():
+            # Sum up the total samples from all weeks
+            total_samples = sum(s.sum() for s in hist_list)
+            num_weeks = len(hist_list)
+            
+            avg_per_week = total_samples / num_weeks if num_weeks > 0 else 0
+            
+            print(f"  > Algorithm: {algo_name:<15} | Total Samples: {int(total_samples):<6} | "
+                  f"Weeks Run: {num_weeks:<3} | Avg/Week: {avg_per_week:.1f}")
+        # -------------------------------------
 
         all_weekly_hist[scfg["id"]] = weekly_hist
         all_weekly_samples[scfg["id"]] = weekly_samples
@@ -800,43 +806,15 @@ def main():
 
         if args.save_samples:
             print(f"  Saving selected samples for {scfg['name']}...")
-
-            # Define stable key(s) to recover full linelist rows
-            # Use both if available to avoid accidental collisions
-            KEY_COLS = ["sim_pid", "sim_tick"]
-
-            # Capture linelist column order once (include everything except helper col "group" if you want)
-            LINELIST_COLS = [c for c in line_df.columns if c != "group"]
-
+            
             for algo_name, sample_weeks_list in weekly_samples.items():
                 if not sample_weeks_list:
-                    print(f"    - No samples generated for algorithm '{algo_name}', skipping.")
                     continue
 
-                # Combine all weekly sampler outputs (may be partial cols / reset index)
-                picked_df = pd.concat(sample_weeks_list, ignore_index=True)
+                # Use the data directly from the scenario run, which already has full rows
+                full_sample_df = pd.concat(sample_weeks_list, ignore_index=True)
 
-                # Decide which keys we can actually use
-                usable_keys = [k for k in KEY_COLS if k in picked_df.columns and k in line_df.columns]
-
-                if not usable_keys:
-                    raise ValueError(
-                        f"Cannot recover full linelist rows for '{algo_name}'. "
-                        f"Sampler output is missing keys {KEY_COLS}. "
-                        f"Columns present: {list(picked_df.columns)}"
-                    )
-
-                # Get unique keys selected by the sampler
-                keys_df = picked_df[usable_keys].dropna().drop_duplicates()
-
-                # Recover full rows from the ORIGINAL linelist (not just sampler output)
-                # Note: this will include all linelist columns
-                full_sample_df = line_df.merge(keys_df, on=usable_keys, how="inner").copy()
-
-                # Keep EXACT linelist schema/order
-                full_sample_df = full_sample_df.reindex(columns=LINELIST_COLS)
-
-                # Optional: add metadata columns AFTER linelist columns
+                # Add your metadata
                 full_sample_df = full_sample_df.assign(
                     run_id=run_id,
                     linelist_id=linelist_id,
@@ -845,12 +823,11 @@ def main():
                     algorithm=algo_name,
                 )
 
-                # Construct filename
                 sample_out_path = outdir / f"{run_id}_scenario{scfg['id']}_{algo_name}_samples.csv.xz"
-
-                # Save
                 full_sample_df.to_csv(sample_out_path, index=False, compression="xz")
-                print(f"    - Saved {len(full_sample_df)} samples for '{algo_name}' to {sample_out_path}")
+                
+                # This print should now match your "Results for Scenario X" log
+                print(f"    - Saved {len(full_sample_df)} samples to {sample_out_path}")
 
     # ---------- build infections weekly history ----------
     weekly_inf_hist = build_weekly_infections(
