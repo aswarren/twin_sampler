@@ -263,12 +263,12 @@ def format_final_linelist(
 
     # --- Step 4: Rename Columns for Final Output ---
 
-    #rename_map = {
-    #    'pid': 'sim_pid',
-    #    'tick': 'sim_tick',
+    rename_map = {
+        'pid': 'sim_pid',
+        'tick': 'sim_tick',
         # 'county' column should be loaded from persontrait file
-    #}
-    #df.rename(columns=rename_map, inplace=True)
+    }
+    df.rename(columns=rename_map, inplace=True)
 
     # --- Step 5: Select and Reorder Final Columns ---
     # This list defines the exact schema of the final output file.
