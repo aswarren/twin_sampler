@@ -53,7 +53,7 @@ def main():
             "--batch-size", "100",
             "--no-replacement",
             "--seed", "42",
-            "--algorithms", "surs", "stratified", "LASSO-Stratified",
+            "--algorithms", "surs", "stratified", "LASSO-Greedy", "LASSO-Stratified",
             "--stratifiers", "age", "race", "county", "sex"
         ]
         

@@ -33,10 +33,10 @@ SCENARIOS = [
 { "id": 1, "name": "Scenario 1",
   "target_mode": "linelist_dynamic",
   "target_linelist_mode": "rolling",
-  "target_linelist_window": ROLL_W,
-  "decision_window_weeks": ROLL_W,
-  "eval_metric": "kl_vs_linelist_rolling",
-  "eval_window_weeks": ROLL_W,
+  "target_linelist_window": 1,
+  "decision_window_weeks": 1,
+  "eval_metric": "per_stride_kl",
+  "eval_window_weeks": None,
   "batch_frac": BATCH_FRAC_DEFAULT, "batch_cap": BATCH_CAP_DEFAULT, "min_per_group": MIN_PER_GROUP_DEFAULT,
   "pool_mode": "rolling", "pool_window_weeks": 1, "no_replacement": True
 },
@@ -47,8 +47,8 @@ SCENARIOS = [
   "target_linelist_mode": "rolling",
   "target_linelist_window": ROLL_W,
   "decision_window_weeks": ROLL_W,
-  "eval_metric": "kl_vs_linelist_rolling",
-  "eval_window_weeks": ROLL_W,
+  "eval_metric": "per_stride_kl",
+  "eval_window_weeks": None,
   "batch_frac": BATCH_FRAC_DEFAULT, "batch_cap": BATCH_CAP_DEFAULT, "min_per_group": MIN_PER_GROUP_DEFAULT,
   "pool_mode": "rolling", "pool_window_weeks": 4, "no_replacement": True
 },
@@ -82,9 +82,9 @@ SCENARIOS = [
 { "id": 3, "name": "Scenario 3",
   "target_type": "blend", "blend_alpha": BLEND_ALPHA,
   "target_linelist_mode": "rolling",
-  "target_linelist_window": ROLL_W,
-  "decision_window_weeks": ROLL_W,
-  "eval_metric": "mean_kl_cum",
+  "target_linelist_window": 1,
+  "decision_window_weeks": 1,
+  "eval_metric": "per_stride_kl",
   "eval_window_weeks": None,
   "batch_frac": BATCH_FRAC_DEFAULT, "batch_cap": BATCH_CAP_DEFAULT, "min_per_group": MIN_PER_GROUP_DEFAULT,
   "pool_mode": "rolling", "pool_window_weeks": 1, "no_replacement": True
@@ -96,7 +96,7 @@ SCENARIOS = [
   "target_linelist_mode": "rolling",
   "target_linelist_window": ROLL_W,
   "decision_window_weeks": ROLL_W,
-  "eval_metric": "mean_kl_cum",
+  "eval_metric": "per_stride_kl",
   "eval_window_weeks": None,
   "batch_frac": BATCH_FRAC_DEFAULT, "batch_cap": BATCH_CAP_DEFAULT, "min_per_group": MIN_PER_GROUP_DEFAULT,
   "pool_mode": "rolling", "pool_window_weeks": 4, "no_replacement": True
@@ -128,8 +128,8 @@ SCENARIOS = [
 # 5) 1S–P
 { "id": 5, "name": "Scenario 5",
   "target_mode": "population_static",
-  "decision_window_weeks": ROLL_W,
-  "eval_metric": "kl_vs_population_cum",
+  "decision_window_weeks": 1,
+  "eval_metric": "per_stride_kl",
   "eval_window_weeks": None,
   "batch_frac": BATCH_FRAC_DEFAULT, "batch_cap": BATCH_CAP_DEFAULT, "min_per_group": MIN_PER_GROUP_DEFAULT,
   "pool_mode": "rolling", "pool_window_weeks": 1, "no_replacement": True
@@ -139,7 +139,7 @@ SCENARIOS = [
 { "id": 6, "name": "Scenario 6",
   "target_mode": "population_static",
   "decision_window_weeks": ROLL_W,
-  "eval_metric": "kl_vs_population_cum",
+  "eval_metric": "per_stride_kl",
   "eval_window_weeks": None,
   "batch_frac": BATCH_FRAC_DEFAULT, "batch_cap": BATCH_CAP_DEFAULT, "min_per_group": MIN_PER_GROUP_DEFAULT,
   "pool_mode": "rolling", "pool_window_weeks": 4, "no_replacement": True

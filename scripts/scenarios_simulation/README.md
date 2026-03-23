@@ -42,3 +42,18 @@ python3 run_replicates.py \
   --no-plots
 
 python3 plot_kl_uncertainty.py --root scenario_runs --outdir result_graphs
+```
+
+# Run lite version with:
+```bash
+python3 run_sampling_lite.py \
+  --linelist ../data/sliced_linelist/batch_week_4_ends_2021-06-27.csv \
+  --population ../../va_persontrait_epihiper.txt \
+  --history ./sampling_result_lite \
+  --outdir ./sampling_result_lite \
+  --batch-size 100 \
+  --no-replacement \
+  --seed 42 \
+  --algorithms "surs" \
+  --stratifiers "age", "race", "county", "sex"
+```

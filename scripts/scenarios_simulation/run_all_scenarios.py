@@ -495,6 +495,44 @@ def blended_target(linelist_dist, pop_dist, alpha=0.5):
     s = tgt.sum()
     return tgt / s if s > 0 else tgt
 
+def per_stride_kl_vs_target(weekly_sample_hist, weekly_ll_hist, pop_dist, scfg):
+    """
+    Per-stride (per-week) KL: each week's sample distribution vs that week's
+    actual target distribution (the same target the sampler was given).
+
+    This reconstructs the target for each week using the scenario config,
+    matching exactly what run_one_scenario computes at sampling time.
+    """
+    out = []
+    n = len(weekly_sample_hist)
+    for i in range(n):
+        sample_counts = weekly_sample_hist[i]
+        if sample_counts.sum() == 0:
+            out.append(float("nan"))
+            continue
+
+        sample_dist = sample_counts / sample_counts.sum()
+
+        # Reconstruct the target for this week (same logic as in the sampling loop)
+        if scfg.get("target_type") == "blend":
+            ll_mode   = scfg.get("target_linelist_mode", "cumulative")
+            ll_window = scfg.get("target_linelist_window", 4)
+            alpha     = scfg.get("blend_alpha", 0.5)
+            ll_dist   = linelist_dist_at_week(weekly_ll_hist, i, ll_mode, ll_window)
+            target_dist = blended_target(ll_dist, pop_dist, alpha)
+        elif scfg.get("target_mode") == "linelist_dynamic":
+            ll_mode   = scfg.get("target_linelist_mode", "cumulative")
+            ll_window = scfg.get("target_linelist_window", 4)
+            target_dist = linelist_dist_at_week(weekly_ll_hist, i, ll_mode, ll_window)
+        else:
+            target_dist = pop_dist
+
+        if target_dist is None or target_dist.empty:
+            target_dist = pop_dist
+
+        out.append(kl_dist(sample_dist, target_dist))
+    return out
+
 def series_auc(ys):
     """Trapezoidal AUC over weeks for a KL series; ignores NaNs. Lower is better."""
     y = np.asarray(list(ys), dtype=float)
@@ -530,6 +568,7 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
       - no_replacement: bool
     """
     algorithms = algorithms or REGISTRY
+    history_list = history_list or []
     overrides = overrides or {}
     ov_fixed = overrides.get("batch_size_fixed", None)
     ov_frac  = overrides.get("batch_frac", None)
@@ -700,6 +739,8 @@ def run_one_scenario(line_df, date_field, pop_dist_static, weekly_ll_hist,
             a = cum_kl_vs_linelist(wh, weekly_ll_hist)
             b = cum_kl_vs_population(wh, pop_dist_static)
             ys = [(ai + bi) / 2.0 for ai, bi in zip(a, b)]
+        elif metric == "per_stride_kl":
+            ys = per_stride_kl_vs_target(wh, weekly_ll_hist, pop_dist_static, scfg)
         else:
             raise ValueError(f"Unknown eval_metric: {metric}")
         per_algo_eval[algo] = ys
