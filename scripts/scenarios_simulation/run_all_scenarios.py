@@ -34,6 +34,7 @@ def parse_args():
     ap.add_argument("--start-date", default=str(START_DATE_DEFAULT.date()), help=f"Week slicing anchor date (default: {START_DATE_DEFAULT.date()})")
     ap.add_argument("--min-pool", type=int, default=MINIMUM_POOL_SIZE_DEFAULT, help=f"Minimum weekly pool size (default: {MINIMUM_POOL_SIZE_DEFAULT})")
     ap.add_argument("--outdir", default="result", help="Output directory for CSVs/plots (default: result)")
+    ap.add_argument("--outname", default=None, help="Optional basename prefix for all output files.")
     ap.add_argument("--seed", type=int, default=42, help="Global random seed (default: 42)")
     ap.add_argument("--roll-win-inf", type=int, default=4, help="Rolling window (weeks) for infections Plot 3 (default: 4)")
 
@@ -757,6 +758,10 @@ def main():
     # identifiers so you can aggregate across many runs
     linelist_id = Path(args.linelist).stem
     run_id = f"{linelist_id}__seed{args.seed}"
+    output_basename = args.outname.strip() if args.outname else None
+
+    def out_path(filename: str) -> Path:
+        return outdir / (f"{output_basename}_{filename}" if output_basename else filename)
 
     start_date = pd.to_datetime(args.start_date)
     rng_master = np.random.default_rng(args.seed)
@@ -864,7 +869,8 @@ def main():
                     algorithm=algo_name,
                 )
 
-                sample_out_path = outdir / f"{run_id}_scenario{scfg['id']}_{algo_name}_samples.csv.xz"
+                sample_prefix = output_basename if output_basename else run_id
+                sample_out_path = outdir / f"{sample_prefix}_scenario{scfg['id']}_{algo_name}_samples.csv.xz"
                 full_sample_df.to_csv(sample_out_path, index=False, compression="xz")
                 
                 # This print should now match your "Results for Scenario X" log
@@ -960,7 +966,7 @@ def main():
                     })
             ax.grid(True, linestyle="--", alpha=0.6); ax.legend(ncol=4, fontsize=8); ax.set_xlim(left=0.9)
         figA.tight_layout()
-        outA = outdir / "A_table3_targets_1xN.png"
+        outA = out_path("A_table3_targets_1xN.png")
         plt.savefig(outA, dpi=150); print(f"Saved: {outA}")
         plt.close(figA)
 
@@ -998,7 +1004,7 @@ def main():
                     })
             ax.grid(True, linestyle="--", alpha=0.6); ax.legend(ncol=4, fontsize=8); ax.set_xlim(left=0.9)
         figB.tight_layout()
-        outB = outdir / "B_vs_cumulative_infections_1xN.png"
+        outB = out_path("B_vs_cumulative_infections_1xN.png")
         plt.savefig(outB, dpi=150); print(f"Saved: {outB}")
         plt.close(figB)
 
@@ -1036,7 +1042,7 @@ def main():
                     })
             ax.grid(True, linestyle="--", alpha=0.6); ax.legend(ncol=4, fontsize=8); ax.set_xlim(left=0.9)
         figC.tight_layout()
-        outC = outdir / f"C_vs_rolling{args.roll_win_inf}_infections_1xN.png"
+        outC = out_path(f"C_vs_rolling{args.roll_win_inf}_infections_1xN.png")
         plt.savefig(outC, dpi=150); print(f"Saved: {outC}")
         plt.close(figC)
     
@@ -1083,7 +1089,7 @@ def main():
         axD.legend()
         
         figD.tight_layout()
-        outD = outdir / "D_weekly_sampling_ratios.png"
+        outD = out_path("D_weekly_sampling_ratios.png")
         plt.savefig(outD, dpi=150)
         print(f"Saved: {outD}")
         plt.close(figD)
@@ -1218,7 +1224,7 @@ def main():
             ax.set_xlim(left=0.9)
 
         figE.tight_layout()
-        outE = outdir / "E_variant_prevalence_error_weekly_1xN.png"
+        outE = out_path("E_variant_prevalence_error_weekly_1xN.png")
         plt.savefig(outE, dpi=150)
         print(f"Saved: {outE}")
         plt.close(figE)
@@ -1343,7 +1349,7 @@ def main():
             ax.set_xlim(left=0.9)
 
         figF.tight_layout()
-        outF = outdir / "F_variant_prevalence_error_rolling4_1xN.png"
+        outF = out_path("F_variant_prevalence_error_rolling4_1xN.png")
         plt.savefig(outF, dpi=150)
         print(f"Saved: {outF}")
         plt.close(figF)
@@ -1469,7 +1475,7 @@ def main():
                 ax.set_xlim(left=0.9)
 
             figG.tight_layout()
-            outG = outdir / "G_component_coverage_weekly_1xN.png"
+            outG = out_path("G_component_coverage_weekly_1xN.png")
             plt.savefig(outG, dpi=150)
             print(f"Saved: {outG}")
             plt.close(figG)
@@ -1575,7 +1581,7 @@ def main():
                 ax.set_xlim(left=0.9)
 
             figH.tight_layout()
-            outH = outdir / "H_component_coverage_rolling4_1xN.png"
+            outH = out_path("H_component_coverage_rolling4_1xN.png")
             plt.savefig(outH, dpi=150)
             print(f"Saved: {outH}")
             plt.close(figH)
@@ -1706,9 +1712,9 @@ def main():
                     ax.set_ylim(0, 1.05)
 
                 fig.tight_layout()
-                out_path = outdir / f"{letter}_coverage_size_gt_{thresh}_1xN.png"
-                plt.savefig(out_path, dpi=150)
-                print(f"Saved: {out_path}")
+                fig_out_path = out_path(f"{letter}_coverage_size_gt_{thresh}_1xN.png")
+                plt.savefig(fig_out_path, dpi=150)
+                print(f"Saved: {fig_out_path}")
                 plt.close(fig)
 
         # =================== FIGURE M: 8-Week Rolling Tree Coverage ===================
@@ -1817,7 +1823,7 @@ def main():
                 ax.set_ylim(0, 1.05)
 
             figM.tight_layout()
-            outM = outdir / "M_tree_coverage_rolling8_1xN.png"
+            outM = out_path("M_tree_coverage_rolling8_1xN.png")
             plt.savefig(outM, dpi=150)
             print(f"Saved: {outM}")
             plt.close(figM)
@@ -1956,7 +1962,7 @@ def main():
                 
                 # Sanitize the age group name for saving to the filesystem
                 ag_clean_file = "".join([c if c.isalnum() else "_" for c in ag]).strip("_")
-                outN = outdir / f"N_equity_heatmap_{ag_clean_file}.png"
+                outN = out_path(f"N_equity_heatmap_{ag_clean_file}.png")
                 plt.savefig(outN, dpi=150)
                 print(f"Saved: {outN}")
                 plt.close(figN)
@@ -1968,7 +1974,7 @@ def main():
     
     # ------------------- Save per-week KL series for uncertainty bands -------------------
     kl_df = pd.DataFrame(kl_rows)
-    kl_out = outdir / "KL_series.csv"
+    kl_out = out_path("KL_series.csv")
     kl_df.to_csv(kl_out, index=False)
     print(f"Saved KL series: {kl_out}")
 
@@ -1984,7 +1990,7 @@ def main():
             auc_df["rank_overall"] = auc_df.groupby("eval_type")["auc"].rank(method="dense", ascending=True)
             auc_df["rank_within_algo"] = auc_df.groupby(["eval_type", "algorithm"])["auc"].rank(method="dense", ascending=True)
 
-            auc_out = outdir / "AUC_rankings.csv"
+            auc_out = out_path("AUC_rankings.csv")
             auc_df.sort_values(["eval_type", "rank_overall", "algorithm", "scenario_id"]).to_csv(auc_out, index=False)
             print(f"\nSaved AUC rankings: {auc_out}")
 
