@@ -38,22 +38,31 @@ python3 run_all_scenarios.py \
 ```bash
 python3 run_replicates.py \
   --replicates-dir ../data/replicate \
-  --population ../../va_persontrait_epihiper.txt \
-  --no-plots
+  --population ../../va_persontrait_epihiper.txt
 
 python3 plot_kl_uncertainty.py --root scenario_runs --outdir result_graphs
 ```
 
 # Run lite version with:
 ```bash
-python3 run_sampling_lite.py \
-  --linelist ../data/sliced_linelist/batch_week_4_ends_2021-06-27.csv \
+# week 1:
+python3 run_weekly_sampling.py \
+  --linelist ../data/linelist.csv \
   --population ../../va_persontrait_epihiper.txt \
-  --history ./sampling_result_lite \
-  --outdir ./sampling_result_lite \
+  --target "LL" \
+  --current-date 2021-05-31 \
   --batch-size 100 \
-  --no-replacement \
-  --seed 42 \
-  --algorithms "surs" \
-  --stratifiers "age", "race", "county", "sex"
+  --algorithms surs \
+  --no-replacement
+
+# week 2:
+python3 run_weekly_sampling.py \
+  --linelist ../data/linelist.csv \
+  --population ../../va_persontrait_epihiper.txt \
+  --already-sequenced weekly_results/ \
+  --target "LL"  \
+  --current-date 2021-06-07 \
+  --batch-size 100 \
+  --algorithms surs \
+  --no-replacement
 ```
