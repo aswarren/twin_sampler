@@ -91,7 +91,7 @@ def process_epihiper(
     # 2. Load decoration data
     print(f"Loading persontrait data from {persontrait_path}...")
     #person_df = pd.read_csv(persontrait_path,skiprows=1)
-    loader = DemographicsLoader(persontrait_path, use_pyarrow=True)
+    loader = DemographicsLoader(persontrait_path, use_pyarrow=True, skiprows=1)
     person_df = loader.get_dataframe()
     person_df = person_df.reset_index() # Ensure 'pid' is a column for merging
     print(f"Loading household data from {household_path}...")

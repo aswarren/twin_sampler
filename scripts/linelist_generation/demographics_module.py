@@ -15,18 +15,18 @@ class DemographicsLoader:
         'gender': 'sex'
     }
 
-    def __init__(self, filepath, use_pyarrow=True):
+    def __init__(self, filepath, use_pyarrow=True, skiprows=1):
         self.filepath = filepath
-        self.df = self._load_and_standardize(use_pyarrow)
+        self.df = self._load_and_standardize(use_pyarrow, skiprows)
 
-    def _load_and_standardize(self, use_pyarrow):
+    def _load_and_standardize(self, use_pyarrow, skiprows):
         """Loads the CSV and applies universal schema rules."""
         engine = "pyarrow" if use_pyarrow else "c"
         try:
-            df = pd.read_csv(self.filepath, engine=engine)
+            df = pd.read_csv(self.filepath, engine=engine, skiprows=skiprows)
         except (ImportError, ValueError):
             print("Warning: pyarrow engine failed or not installed, falling back to default C engine.")
-            df = pd.read_csv(self.filepath)
+            df = pd.read_csv(self.filepath, skiprows=skiprows)
 
         # 1. Standardize Column Names (This fixes the 'county' missing issue!)
         df.rename(columns=self.COLUMN_MAPPINGS, inplace=True)
