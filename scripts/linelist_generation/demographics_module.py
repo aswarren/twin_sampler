@@ -39,7 +39,7 @@ class DemographicsLoader:
 
         # 3. Set Index for fast row-by-row lookups
         if 'pid' in df.columns:
-            df.set_index('pid', inplace=True
+            df.set_index('pid', inplace=True)
 
         # 4. Standardize smh_race
         if 'smh_race' in df.columns:
