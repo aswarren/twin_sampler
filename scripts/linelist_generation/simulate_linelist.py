@@ -95,7 +95,8 @@ def process_epihiper(
     person_df = loader.get_dataframe()
     person_df = person_df.reset_index() # Ensure 'pid' is a column for merging
     print(f"Loading household data from {household_path}...")
-    household_df = pd.read_csv(household_path)
+    hh_loader = DemographicsLoader(household_path, use_pyarrow=True)
+    household_df = hh_loader.get_dataframe()
     print(f"Loading and pivoting RUCC data from {rucc_path}...")
     rucc_df = load_and_pivot_rucc(rucc_path)
 
