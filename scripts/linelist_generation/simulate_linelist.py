@@ -241,16 +241,6 @@ def format_final_linelist(
 
     # --- Step 2: Transform Data from Codes to Strings ---
 
-    # Map gender codes to 'sex' strings
-    gender_map = {1: 'male', 2: 'female'}
-    df['sex'] = df['gender'].map(gender_map).fillna('unknown')
-
-    # Map smh_race codes to strings (based on common conventions)
-    smh_race_map = {'W': 'White', 'B': 'Black', 'A': 'Asian', 'L': 'Latino', 'O': 'Other'}
-    df['smh_race'] = df['smh_race'].map(smh_race_map).fillna(df['smh_race']) # Keep original if no match
-
-    # Map hispanic boolean (assuming 2 is True, 1 is False)
-    df['latino'] = df['hispanic'].apply(lambda x: True if x == 2 else False)
 
     # Map descriptive age groups (this mapping should exist in your persontrait file,
     # but we can recreate a simplified one if needed. Here we assume 'age_group'
