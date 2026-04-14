@@ -25,6 +25,7 @@ import sys
 import json
 from rucc_utils import load_and_pivot_rucc
 from testing_prob import compute_testing_probability
+from demographics_module.loader import DemographicsLoader
 from ascertainment_module import (
 load_ascertainment_parameters,
 preprocess_for_ascertainment,
@@ -89,7 +90,10 @@ def process_epihiper(
 
     # 2. Load decoration data
     print(f"Loading persontrait data from {persontrait_path}...")
-    person_df = pd.read_csv(persontrait_path,skiprows=1)
+    #person_df = pd.read_csv(persontrait_path,skiprows=1)
+    loader = DemographicsLoader(persontrait_path, use_pyarrow=True)
+    person_df = loader.get_dataframe()
+    person_df = person_df.reset_index() # Ensure 'pid' is a column for merging
     print(f"Loading household data from {household_path}...")
     household_df = pd.read_csv(household_path)
     print(f"Loading and pivoting RUCC data from {rucc_path}...")
