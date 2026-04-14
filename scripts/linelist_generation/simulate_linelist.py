@@ -25,7 +25,7 @@ import sys
 import json
 from rucc_utils import load_and_pivot_rucc
 from testing_prob import compute_testing_probability
-from demographics_module.loader import DemographicsLoader
+from demographics_module import DemographicsLoader
 from ascertainment_module import (
 load_ascertainment_parameters,
 preprocess_for_ascertainment,
