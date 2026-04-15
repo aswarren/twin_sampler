@@ -91,7 +91,7 @@ def process_epihiper(
     # 2. Load decoration data
     print(f"Loading persontrait data from {persontrait_path}...")
     #person_df = pd.read_csv(persontrait_path,skiprows=1)
-    loader = DemographicsLoader(persontrait_path, use_pyarrow=True, skiprows=1)
+    loader = DemographicsLoader(persontrait_path, use_pyarrow=True, skiprows=1, county_lookup=True)
     person_df = loader.get_dataframe()
     person_df = person_df.reset_index() # Ensure 'pid' is a column for merging
     print(f"Loading household data from {household_path}...")
@@ -114,6 +114,9 @@ def process_epihiper(
             how="left",
         ).drop(columns=['FIPS'], errors='ignore')
     print("Successfully decorated data with person, household, and RUCC info.")
+
+    decorated_df['county'] = decorated_df["county"].map(loader.fips_to_name_dict).fillna("Unknown")
+
     
     # 4. Calculate the 'date' column
     base_date = pd.to_datetime(start_date)

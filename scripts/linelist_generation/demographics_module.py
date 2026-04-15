@@ -15,9 +15,19 @@ class DemographicsLoader:
         'gender': 'sex'
     }
 
-    def __init__(self, filepath, use_pyarrow=True, skiprows=1):
+    def __init__(self, filepath, use_pyarrow=True, skiprows=0, county_lookup=False):
         self.filepath = filepath
         self.df = self._load_and_standardize(use_pyarrow, skiprows)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        if county_lookup:
+            # Construct the path relative to the script's directory
+            fips_csv_path = os.path.join(script_dir, "../../Data/county_fips.csv")
+            fips_csv_path = os.path.normpath(fips_csv_path)
+            print(f"Loading FIPS mapping from {fips_csv_path}...")
+            fips_mapping_df = pd.read_csv(fips_csv_path, dtype={'FIPS': str})
+            self.fips_to_name_dict = dict(zip(fips_mapping_df['FIPS'], fips_mapping_df['county']))
+        else:
+            self.fips_to_name_dict = None
 
     def _load_and_standardize(self, use_pyarrow, skiprows):
         """Loads the CSV and applies universal schema rules."""
