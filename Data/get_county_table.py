@@ -14,7 +14,7 @@ df['STATEFP'] = df['STATEFP'].astype(int).apply(lambda x: f"{x:02d}")
 df['COUNTYFP'] = df['COUNTYFP'].astype(int).apply(lambda x: f"{x:03d}")
 df['FIPS'] = df['STATEFP'] + df['COUNTYFP']
 df['COUNTYNAME'] = df['COUNTYNAME'].str.replace(r'\s+city$', ' City', regex=True)
-df['COUNTYNAME'] = df['COUNTYNAME'].str.replace(r'\s+county$', ' County', regex=True)
+df['COUNTYNAME'] = df['COUNTYNAME'].str.replace(r'[\s]*County[\s]*$', '', regex=True)
 df['county'] = df['COUNTYNAME'] + ' ' + df['STATE']
 out = df[['county','FIPS']]
 out.to_csv('county_fips.csv', index=False)
