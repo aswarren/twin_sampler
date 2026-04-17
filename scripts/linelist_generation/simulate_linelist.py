@@ -115,7 +115,7 @@ def process_epihiper(
         ).drop(columns=['FIPS'], errors='ignore')
     print("Successfully decorated data with person, household, and RUCC info.")
 
-    decorated_df['county'] = decorated_df["county"].map(loader.fips_to_name_dict).fillna("Unknown")
+    decorated_df['county'] = decorated_df["county_fips"].map(loader.fips_to_name_dict).fillna("Unknown")
 
     
     # 4. Calculate the 'date' column
