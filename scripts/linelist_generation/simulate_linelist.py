@@ -278,7 +278,7 @@ def format_final_linelist(
         'variant_label', 'component_id', # <-- NEWLY ADDED COLUMNS
         'county_fips', 'hid', 'occupation_socp',
         'FIPS', 'rucc_code', 'admin1', 'admin2', 'admin3', 'admin4', 'hh_size',
-        'vehicles', 'hh_income', 'household_language', 'family_type_and_employment_status',
+        'vehicles', 'hh_income', 'ses_category', 'household_language', 'family_type_and_employment_status',
         'workers_in_family', 'rlid', 'asymptomatic', 'test_prob', 'tested_positive', 'exit_state'
     ]
 
