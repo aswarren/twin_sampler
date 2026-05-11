@@ -295,6 +295,102 @@ def format_final_linelist(
     print("Formatting complete.")
     return final_df
 
+
+import json
+from collections import defaultdict
+
+def generate_mugration_json(events_df: pd.DataFrame, output_path: str):
+    """
+    Calculates geographic transfer rates (origin -> destination) from ABM exposure events
+    and outputs them in a JSON format compatible with Nextstrain/Augur mugration models.
+    """
+    print(f"--- Generating Nextstrain-compatible Mugration JSON ---")
+    
+    # 1. Create a fast lookup map for pid -> county
+    # Ensure events_df has 'pid' and 'county' columns
+    if 'county' not in events_df.columns:
+        print("Warning: 'county' column not found in events file. Skipping mugration JSON.")
+        return
+        
+    pid_to_county = events_df.set_index('pid')['county'].to_dict()
+    
+    # 2. Map counties to the exposure events
+    # We use a copy to avoid SettingWithCopyWarning
+    df = events_df.copy()
+    df['origin_county'] = df['contact_pid'].map(pid_to_county)
+    df['dest_county'] = df['pid'].map(pid_to_county)
+    
+    # 3. Calculate Equilibrium Probabilities (Overall fraction of infections per county)
+    # We use ALL exposures (including seed cases with contact_pid == -1) for this
+    county_counts = df['dest_county'].value_counts()
+    total_infections = county_counts.sum()
+    
+    # Nextstrain standard: alphabet includes an empty string for missing/unknown data at index 0
+    unique_counties = sorted([str(c) for c in df['dest_county'].dropna().unique()])
+    alphabet = [""] + unique_counties
+    
+    eq_probs = [0.0] * len(alphabet)
+    if total_infections > 0:
+        for i, county in enumerate(alphabet):
+            if county != "":
+                eq_probs[i] = float(county_counts.get(county, 0) / total_infections)
+
+    # 4. Calculate Transfer Rates
+    # Filter for valid, inter-county transmissions only
+    inter_county_df = df[
+        (df['contact_pid'] != -1) & 
+        (df['origin_county'].notna()) & 
+        (df['dest_county'].notna()) & 
+        (df['origin_county'] != df['dest_county'])
+    ]
+    
+    # Fast aggregation: Group by origin and destination and count occurrences
+    transfer_counts = inter_county_df.groupby(['origin_county', 'dest_county']).size()
+    outbound_totals = inter_county_df.groupby('origin_county').size()
+    
+    # 5. Build the N x N Transition Matrix
+    N = len(alphabet)
+    transition_matrix = [[0.0 for _ in range(N)] for _ in range(N)]
+    
+    for i, origin in enumerate(alphabet):
+        if origin == "" or outbound_totals.get(origin, 0) == 0:
+            continue
+            
+        for j, dest in enumerate(alphabet):
+            if i == j or dest == "":
+                continue # Diagonals and unknown states remain 0.0
+                
+            # If the specific transfer exists, calculate its proportion
+            if (origin, dest) in transfer_counts:
+                count = transfer_counts[(origin, dest)]
+                transition_matrix[i][j] = float(count / outbound_totals[origin])
+
+    # 6. Overall Rate (Proxy: Inter-county jumps per infection)
+    overall_rate = float(len(inter_county_df) / total_infections) if total_infections > 0 else 1.0
+
+    # 7. Construct and Write the JSON
+    output_data = {
+        "generated_by": {
+            "program": "simulate_linelist.py",
+            "version": "digital_twin_1.0"
+        },
+        "models": {
+            "county": {
+                "alphabet": alphabet,
+                "equilibrium_probabilities": eq_probs,
+                "rate": overall_rate,
+                "transition_matrix": transition_matrix
+            }
+        }
+    }
+    
+    with open(output_path, 'w') as f:
+        json.dump(output_data, f, indent=2)
+        
+    print(f"Mugration JSON saved successfully to: {output_path}")
+
+
+
 def simulate(events_df: pd.DataFrame, params: dict, seed: int | None = None) -> pd.DataFrame:
     """
     NEW: Iterates through chronologically sorted events, performing a Bernoulli trial
@@ -450,7 +546,10 @@ def main():
     # ... (The rest of main() remains exactly the same, as it now receives a correctly
     #      filtered, decorated, and labeled `events_df`)
     
-    base_output_path = args.out.replace(".csv", "")
+    base_output_path = args.out.replace(".csv.gz", "").replace(".csv", "")
+    mugration_out_path = f"{base_output_path}_mugration.json"
+    
+    generate_mugration_json(events_df, mugration_out_path)
 
     try:
         full_params = load_ascertainment_parameters(args.ascertain)
