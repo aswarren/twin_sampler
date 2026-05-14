@@ -64,6 +64,24 @@ def process_epihiper(
     exposures_df = events_df.loc[events_df['exit_state'].str.startswith(exposed_filter),['tick', 'pid', 'contact_pid']].copy()
     exposures_df['exposure_tick'] = exposures_df['tick']
 
+    alias_map = {}
+    alias_contact_list = []
+    
+    # Build the precise time-aware transmission links
+    for row in exposures_df.itertuples(index=False):
+        # Look up the infector's most recent alias
+        contact_id = str(getattr(row, "contact_pid", "-1"))
+        alias_contact_list.append(alias_map.get(contact_id, "-1"))
+        
+        # Register the infectee's new alias for this specific event
+        my_pid = str(getattr(row, "pid"))
+        my_alias = f"{my_pid}.{getattr(row, 'tick')}"
+        alias_map[my_pid] = my_alias
+        
+    exposures_df['alias_contact'] = alias_contact_list
+    exposures_df['alias_pid'] = exposures_df['pid'].astype(str) + '.' + exposures_df['tick'].astype(str)
+    exposures_df['exposure_tick'] = exposures_df['tick']
+
     # 1. Filter for relevant ascertainable infectious states
     initial_count = len(events_df)
     events_df = events_df[events_df['exit_state'].str.startswith(prefix_filter)].copy()
@@ -279,7 +297,8 @@ def format_final_linelist(
         'county_fips', 'hid', 'occupation_socp',
         'FIPS', 'rucc_code', 'admin1', 'admin2', 'admin3', 'admin4', 'hh_size',
         'vehicles', 'hh_income', 'ses_category', 'household_language', 'family_type_and_employment_status',
-        'workers_in_family', 'rlid', 'asymptomatic', 'test_prob', 'tested_positive', 'exit_state'
+        'workers_in_family', 'rlid', 'asymptomatic', 'test_prob', 'tested_positive', 'exit_state',
+        'alias_pid', 'alias_contact', 'exposure_tick', 'exposure_date'
     ]
 
     # Ensure all columns from the final schema exist, adding any missing ones as empty.
