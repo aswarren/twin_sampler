@@ -47,11 +47,15 @@ def create_graph_classic(epihiper_df):
     G_full = nx.DiGraph()
     #G_full = nx.MultiDiGraph()
     if not infection_events_df.empty:
+        G_full.add_nodes_from(infection_events_df['alias_pid'])
         #only rows with contact_pid != -1
         # Filter the DataFrame to include only rows where contact_pid is not -1
-        no_imports=infection_events_df[infection_events_df['contact_pid'] != "-1"]
-        # OPTIMIZATION: Use add_edges_from for much faster graph construction
+        no_imports = infection_events_df[
+            (infection_events_df['contact_pid'] != "-1") & 
+            (infection_events_df['alias_contact'] != "-1")
+        ]
         edges = zip(no_imports['alias_contact'], no_imports['alias_pid'], no_imports['tick'])
+        # OPTIMIZATION: Use add_edges_from for much faster graph construction
         G_full.add_edges_from((u, v, {'tick': tick}) for u, v, tick in edges)
 
         G_full.add_edges_from(edges)
