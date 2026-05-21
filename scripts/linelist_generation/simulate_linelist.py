@@ -597,8 +597,8 @@ def main():
     if args.test_alias_graph:
         print("Running unit test to validate alias graph reconstruction...")
         # Assuming create_graph_classic is available and can be called with the original epi_df
-        original_graph = create_graph_classic(epi_df)
-        test_passed = test_alias_graph_equivalence(original_graph, labeled_df)
+        test_graph, _ = create_graph_classic(epi_df)
+        test_passed = test_alias_graph_equivalence(test_graph, labeled_df)
         if not test_passed:
             print("Alias graph equivalence test failed. Please investigate the discrepancies.")
             sys.exit(1)
