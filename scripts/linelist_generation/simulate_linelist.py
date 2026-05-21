@@ -35,7 +35,7 @@ compute_ascertainment_probability
 
 try:
     # Assuming label_components.py is in the same directory or accessible via PYTHONPATH
-    from label_components import create_variant_labels
+    from label_components import create_labels, create_graph_classic
     LABEL_COMPONENTS_AVAILABLE = True
     print("Successfully imported variant labeling functions from label_components.py")
 except ImportError as e:
@@ -78,8 +78,8 @@ def process_epihiper(
         my_alias = f"{my_pid}.{getattr(row, 'tick')}"
         alias_map[my_pid] = my_alias
         
-    exposures_df['alias_contact'] = alias_contact_list
-    exposures_df['alias_pid'] = exposures_df['pid'].astype(str) + '.' + exposures_df['tick'].astype(str)
+    #exposures_df['alias_contact'] = alias_contact_list
+    #exposures_df['alias_pid'] = exposures_df['pid'].astype(str) + '.' + exposures_df['tick'].astype(str)
     exposures_df['exposure_tick'] = exposures_df['tick']
 
     # 1. Filter for relevant ascertainable infectious states
@@ -409,6 +409,57 @@ def generate_mugration_json(events_df: pd.DataFrame, output_path: str):
     print(f"Mugration JSON saved successfully to: {output_path}")
 
 
+def test_alias_graph_equivalence(original_graph, dataframe_to_test):
+    """
+    Unit test to validate that the propagated alias_contact and alias_pid 
+    columns perfectly reconstruct the exact transmission graph.
+    """
+    print("\n--- Running Unit Test: Graph Equivalence ---")
+    
+    # 1. Source of Truth: Edges from the original NetworkX graph
+    # create_graph_classic creates a DiGraph with edges (contact, pid)
+    original_edges = set(original_graph.edges())
+    
+    # 2. Test Subject: Edges implied by the dataframe columns
+    df_edges = set()
+    
+    # We drop duplicates because a single person (alias_pid) has multiple rows (E, P, I, etc.)
+    # but they all represent the same single transmission edge from their infector.
+    unique_transmissions = dataframe_to_test[['alias_contact', 'alias_pid']].drop_duplicates()
+    
+    for _, row in unique_transmissions.iterrows():
+        u = str(row['alias_contact'])
+        v = str(row['alias_pid'])
+        
+        # Only add valid transmission edges (ignore seeds / non-infections)
+        if u and u != "-1" and u != "nan" and u != v:
+            df_edges.add((u, v))
+            
+    # 3. Compare the sets
+    missing_in_df = original_edges - df_edges
+    extra_in_df = df_edges - original_edges
+    
+    is_identical = (len(missing_in_df) == 0 and len(extra_in_df) == 0)
+    
+    if is_identical:
+        print("✅ SUCCESS: The dataframe alias columns perfectly reconstruct the transmission graph!")
+        print(f"   Total unique edges verified: {len(original_edges)}")
+    else:
+        print("❌ FAILURE: Mismatch between original graph and dataframe aliases.")
+        print(f"   Edges in Graph: {len(original_edges)}")
+        print(f"   Edges in DataFrame: {len(df_edges)}")
+        print(f"   Missing from DataFrame: {len(missing_in_df)} edges.")
+        print(f"   Extra in DataFrame: {len(extra_in_df)} edges.")
+        
+        # Print a sample of errors for debugging
+        if missing_in_df:
+            print(f"   Sample missing: {list(missing_in_df)[:3]}")
+        if extra_in_df:
+            print(f"   Sample extra: {list(extra_in_df)[:3]}")
+            
+    print("--------------------------------------------\n")
+    return is_identical
+
 
 def simulate(events_df: pd.DataFrame, params: dict, seed: int | None = None) -> pd.DataFrame:
     """
@@ -463,7 +514,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--stop_tick", type=int, default=None,
                        help="The simulation tick to stop processing at (inclusive). If not provided, processes all ticks.")
     p.add_argument("--schedule_input", type=str, default=None, help="Path to the importation schedule CSV file to enable variant labeling.")
-    p.add_argument("--variant_mode", type=int, choices=[1, 2], default=2, help="Variant labeling mode: 1 (Temporal) or 2 (Bipartite Time & Size).")
+    p.add_argument("--variant_mode", type=str, choices=['variant_temporal', 'variant_bipartite', 'just_components'], default='variant_bipartite', help="Variant labeling mode: 'temporal' or 'bipartite'.")
     p.add_argument("--people", required=True, dest="persontrait_file", help="Path to va_persontrait_epihiper.txt.")
     p.add_argument("--households", required=True, help="Path to va_household.csv.")
     p.add_argument("--rucc", required=True, help="Path to Ruralurbancontinuumcodes2023.csv.")
@@ -474,7 +525,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n_seeds", type=int, default=1, help="Number of different seeds to generate linelists with.")
     p.add_argument("--prefix_override", type=str, default='["A", "P", "I", "dm", "hM"]', help="A JSON-formatted string of exit_state prefixes to filter")
     p.add_argument("--exposed_filter", type=str, default='["E"]', help="A JSON-formatted string of exit_state prefixes to filter")
-
+    p.add_argument("--test_alias_graph", action='store_true', default=False, help="If set, runs a unit test to validate that the alias_contact and alias_pid columns perfectly reconstruct the transmission graph.")
         
     return p.parse_args()
 
@@ -519,18 +570,18 @@ def main():
         print("No events found in the specified time window. Exiting.")
         exit(0)
 
+    if not LABEL_COMPONENTS_AVAILABLE:
+        print("Error: label_components.py could not be imported. Exiting.")
+        sys.exit(1)
+
     # --- Step 3: (Conditional) Apply Variant Labeling to the TIME-FILTERED DataFrame ---
-    if args.schedule_input:
-        if not LABEL_COMPONENTS_AVAILABLE:
-            print("Error: --schedule_input provided, but label_components.py could not be imported. Exiting.")
-            sys.exit(1)
-        
+    if args.schedule_input and args.variant_mode != 'just_components':
         print(f"Loading schedule data from: {args.schedule_input}")
         try:
             sched_df = pd.read_csv(args.schedule_input)
             print(f"Applying variant labels to time-filtered simulation using mode {args.variant_mode}...")
             # This call now receives the time-filtered data and returns it with labels
-            labeled_df = create_variant_labels(epi_df, sched_df, args.variant_mode)
+            labeled_df = create_labels(epi_df, sched_df, args.variant_mode)
             print("Variant labeling complete.")
         except FileNotFoundError:
             print(f"Error: Schedule file not found at {args.schedule_input}. Exiting.")
@@ -539,11 +590,19 @@ def main():
             print(f"An error occurred during variant labeling: {e}. Exiting.")
             sys.exit(1)
     else:
-        print("No --schedule_input provided. Skipping variant labeling.")
-        labeled_df = epi_df.copy() # Use the time-filtered df
+        print("Labeling components and alias infection ids")
+        labeled_df = create_labels(epi_df, None, args.variant_mode)
         labeled_df['variant_label'] = 'unassigned'
-        labeled_df['component_id'] = -1
-
+    
+    if args.test_alias_graph:
+        print("Running unit test to validate alias graph reconstruction...")
+        # Assuming create_graph_classic is available and can be called with the original epi_df
+        original_graph = create_graph_classic(epi_df)
+        test_passed = test_alias_graph_equivalence(original_graph, labeled_df)
+        if not test_passed:
+            print("Alias graph equivalence test failed. Please investigate the discrepancies.")
+            sys.exit(1)
+        
     # --- Step 4: Process Events for Ascertainment ---
     # Call the new helper function with the labeled, time-filtered DataFrame
     events_df = process_epihiper(

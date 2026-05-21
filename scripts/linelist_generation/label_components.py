@@ -55,7 +55,7 @@ def create_graph_classic(epihiper_df):
         G_full.add_edges_from((u, v, {'tick': tick}) for u, v, tick in edges)
 
         G_full.add_edges_from(edges)
-    return G_full 
+    return G_full, infection_events_df 
 
 import networkx as nx
 import pandas as pd
@@ -200,17 +200,17 @@ def mode2_bipartite_match(sim_components, real_imports, time_weight=0.7, max_tim
         
     return assignments
 
-def create_variant_labels(epihiper_df, schedule_df, mode):
+def create_labels(epihiper_df, schedule_df, mode):
     """
     Processes epihiper simulation, identifies components, and assigns variant labels
     based on a real-world importation schedule.
     """
 
-    infection_graph = create_graph_classic(epihiper_df)
+    infection_graph, infection_df = create_graph_classic(epihiper_df)
     # Create graph and get component IDs
     component_df = create_component_table(infection_graph)
-    infection_df = epihiper_df[epihiper_df['exit_state'].str.startswith('E')].copy()
-    infection_df['alias_pid'] = (infection_df['pid'].astype(str) + '.' + infection_df['tick'].astype(str))
+    #infection_df = epihiper_df[epihiper_df['exit_state'].str.startswith('E')].copy()
+    #infection_df['alias_pid'] = (infection_df['pid'].astype(str) + '.' + infection_df['tick'].astype(str))
     # Merge component IDs back into the infection data
     merged_df = pd.merge(infection_df, component_df, on='alias_pid', how='left')
     
@@ -240,25 +240,24 @@ def create_variant_labels(epihiper_df, schedule_df, mode):
     # --- Assign Variants based on Mode ---
     print(f"Step 3: Assigning variants to components using Mode {mode}...")
     assignment_map = {}
-    if mode == 1:
+    if mode == "variant_temporal":
         assignment_map = mode1_temporal_match(component_summary, real_imports_df)
-    elif mode == 2:
+    elif mode == "variant_bipartite":
         assignment_map = mode2_bipartite_match(component_summary, real_imports_df, time_weight=0.7, max_time_penalty_days=90)
     
     if not assignment_map:
         print("Warning: No variant assignments were made. Components will not be labeled.")
         merged_df['variant_label'] = 'unassigned'
-        return merged_df
 
     # --- Apply Labels ---
-    print("Step 4: Applying variant labels to the full simulation dataframe...")
+    print("Step 4: Applying labels to the full simulation dataframe...")
     # Map the assigned variants to the component summary
     component_summary['variant_label'] = component_summary['component_id'].map(assignment_map)
     # Fill any unassigned components (if sim has more components than real imports)
     component_summary['variant_label'].fillna('unassigned', inplace=True)
     
     #create alias_pid for epihiper_df
-    epihiper_df['alias_pid'] = (epihiper_df['pid'].astype(str) + '.' + epihiper_df['tick'].astype(str))
+    #epihiper_df['alias_pid'] = (epihiper_df['pid'].astype(str) + '.' + epihiper_df['tick'].astype(str))
 
     # Merge the final labels into the full infection dataframe
     final_df = pd.merge(merged_df, component_summary[['component_id', 'variant_label']], on='component_id', how='left')
@@ -269,7 +268,7 @@ def create_variant_labels(epihiper_df, schedule_df, mode):
     # We need a dataframe of just the "Labeled Events" sorted by time.
     # Assuming final_df contains the events where the label was established.
     
-    label_source = final_df[['tick', 'pid', 'component_id', 'variant_label']].copy()
+    label_source = final_df[['tick', 'pid', 'component_id', 'variant_label', 'alias_pid', 'alias_contact']].copy()
     label_source = label_source.sort_values('tick')
 
     # 2. Prepare the Target (Full Simulation)
@@ -285,7 +284,7 @@ def create_variant_labels(epihiper_df, schedule_df, mode):
     print("Propagating variant labels using time-aware merge...")
     
     # We drop existing columns if they exist to avoid suffix conflicts (_x, _y)
-    cols_to_drop = [c for c in ['component_id', 'variant_label'] if c in epihiper_df.columns]
+    cols_to_drop = [c for c in ['component_id', 'variant_label', 'alias_pid', 'alias_contact'] if c in epihiper_df.columns]
     if cols_to_drop:
         epihiper_df.drop(columns=cols_to_drop, inplace=True)
 
