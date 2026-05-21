@@ -277,6 +277,11 @@ def create_labels(epihiper_df, schedule_df, mode):
         print("Sorting epihiper_df by tick for label propagation...")
         epihiper_df.sort_values('tick', inplace=True)
 
+    epihiper_df['pid'] = epihiper_df['pid'].astype(str)
+    label_source['pid'] = label_source['pid'].astype(str)
+    
+    epihiper_df['tick'] = epihiper_df['tick'].astype(int)
+    label_source['tick'] = label_source['tick'].astype(int)
     # 3. Propagate Labels (The Replacement Logic)
     # This replaces BOTH the .map() and the .groupby().ffill()
     # Logic: For every row in epihiper_df, look backwards to find the 
