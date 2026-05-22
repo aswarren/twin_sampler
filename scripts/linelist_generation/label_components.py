@@ -158,6 +158,7 @@ def mode2_bipartite_match(sim_components, real_imports, time_weight=0.7, max_tim
     """
     Assigns variants using optimized bipartite matching on time and size,
     with a heavy penalty for matches outside a reasonable time window.
+    (Optimized with NumPy broadcasting for massive component lists).
     """
     print(f"  Applying Mode 2: Bipartite Matching (time_weight={time_weight}, penalty_window={max_time_penalty_days} days)...")
     if real_imports.empty or sim_components.empty:
@@ -167,42 +168,45 @@ def mode2_bipartite_match(sim_components, real_imports, time_weight=0.7, max_tim
     sim_components['norm_size'] = minmax_scale(sim_components['component_size'])
     real_imports['norm_size'] = minmax_scale(real_imports['sample_count'])
     
-    # Create the cost matrix
-    cost_matrix = np.zeros((len(sim_components), len(real_imports)))
+    # --- VECTORIZED MATRIX CALCULATION ---
+    print("  Calculating cost matrix...")
+    # 1. Extract values as numpy arrays and reshape for broadcasting
+    # sim arrays become shape (N, 1)
+    sim_ticks = sim_components['first_tick'].values[:, np.newaxis]
+    sim_sizes = sim_components['norm_size'].values[:, np.newaxis]
     
-    # Normalize time cost by the penalty window, not the max time diff
-    # This makes the time cost scale more aggressively.
+    # real arrays become shape (1, M)
+    real_ticks = real_imports['tick'].values[np.newaxis, :]
+    real_sizes = real_imports['norm_size'].values[np.newaxis, :]
+    
+    # 2. Compute differences (Broadcasting automatically creates N x M matrices)
+    time_diffs = np.abs(sim_ticks - real_ticks)
+    size_costs = np.abs(sim_sizes - real_sizes)
+    
+    # 3. Calculate Base Cost
     time_normalizer = float(max_time_penalty_days)
+    norm_time_cost = time_diffs / time_normalizer
+    cost_matrix = (time_weight * norm_time_cost) + ((1 - time_weight) * size_costs)
     
-    for i, sim_row in sim_components.iterrows():
-        for j, real_row in real_imports.iterrows():
-            time_diff = abs(sim_row['first_tick'] - real_row['tick'])
-            size_cost = abs(sim_row['norm_size'] - real_row['norm_size'])
+    # 4. Apply massive penalty if out of window
+    cost_matrix = np.where(time_diffs > max_time_penalty_days, cost_matrix + 1000, cost_matrix)
             
-            # --- NEW PENALTY LOGIC ---
-            # Normalized time cost (scales from 0 to 1 within the window)
-            norm_time_cost = time_diff / time_normalizer
-
-            # The cost is a weighted average of time and size difference
-            base_cost = (time_weight * norm_time_cost) + ((1 - time_weight) * size_cost)
-
-            # Add a massive penalty if the time difference is outside our acceptable window
-            if time_diff > max_time_penalty_days:
-                base_cost += 1000  # A large number to make this match highly undesirable
-            
-            cost_matrix[i, j] = base_cost
-            
-    # Solve the assignment problem
+    # --- SOLVE THE ASSIGNMENT ---
+    print(f"  Solving linear sum assignment for {cost_matrix.shape[0]}x{cost_matrix.shape[1]} matrix...")
     sim_indices, real_indices = linear_sum_assignment(cost_matrix)
     
-    # Create the assignment map {component_id: variant}
+    # --- CREATE THE ASSIGNMENT MAP ---
     assignments = {}
+    
+    # Extract native arrays for fast lookup
+    comp_ids = sim_components['component_id'].values
+    variants = real_imports['variant'].values
+    
     for i, j in zip(sim_indices, real_indices):
-        component_id = sim_components.iloc[i]['component_id']
-        variant = real_imports.iloc[j]['variant']
-        assignments[component_id] = variant
+        assignments[comp_ids[i]] = variants[j]
         
     return assignments
+
 
 def find_components(epihiper_df):
     infection_graph, infection_df = create_graph_classic(epihiper_df)
