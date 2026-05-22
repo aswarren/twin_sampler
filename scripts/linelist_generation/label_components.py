@@ -225,30 +225,33 @@ def create_labels(epihiper_df, schedule_df, mode):
     ).reset_index()
     print(f"Found {len(component_summary)} unique transmission components in the simulation.")
 
-    # --- Prepare Real-World Importation Data ---
-    print("Step 2: Preparing real-world importation schedule...")
-    # "Unroll" the schedule from the clusters column
-    real_imports_list = []
-    for _, row in schedule_df.iterrows():
-        num_clusters = row['clusters']
-        avg_sample_count = row['sample_count'] / num_clusters if num_clusters > 0 else 0
-        for _ in range(num_clusters):
-            real_imports_list.append({
-                'tick': row['tick'],
-                'variant': row['variant'],
-                'sample_count': avg_sample_count
-            })
-    real_imports_df = pd.DataFrame(real_imports_list)
-    print(f"Unrolled schedule into {len(real_imports_df)} individual importation events.")
-
-    # --- Assign Variants based on Mode ---
-    print(f"Step 3: Assigning variants to components using Mode {mode}...")
     assignment_map = {}
-    if mode == "variant_temporal":
-        assignment_map = mode1_temporal_match(component_summary, real_imports_df)
-    elif mode == "variant_bipartite":
-        assignment_map = mode2_bipartite_match(component_summary, real_imports_df, time_weight=0.7, max_time_penalty_days=90)
-    
+
+    if schedule_df is not None:
+        print(f"Loaded real-world importation schedule with {len(schedule_df)} entries.")
+        # --- Prepare Real-World Importation Data ---
+        print("Step 2: Preparing real-world importation schedule...")
+        # "Unroll" the schedule from the clusters column
+        real_imports_list = []
+        for _, row in schedule_df.iterrows():
+            num_clusters = row['clusters']
+            avg_sample_count = row['sample_count'] / num_clusters if num_clusters > 0 else 0
+            for _ in range(num_clusters):
+                real_imports_list.append({
+                    'tick': row['tick'],
+                    'variant': row['variant'],
+                    'sample_count': avg_sample_count
+                })
+        real_imports_df = pd.DataFrame(real_imports_list)
+        print(f"Unrolled schedule into {len(real_imports_df)} individual importation events.")
+
+        # --- Assign Variants based on Mode ---
+        print(f"Step 3: Assigning variants to components using Mode {mode}...")
+        if mode == "variant_temporal":
+            assignment_map = mode1_temporal_match(component_summary, real_imports_df)
+        elif mode == "variant_bipartite":
+            assignment_map = mode2_bipartite_match(component_summary, real_imports_df, time_weight=0.7, max_time_penalty_days=90)
+        
     if not assignment_map:
         print("Warning: No variant assignments were made. Components will not be labeled.")
         merged_df['variant_label'] = 'unassigned'
