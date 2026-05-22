@@ -209,6 +209,8 @@ def mode2_bipartite_match(sim_components, real_imports, time_weight=0.7, max_tim
 
 
 def find_components(epihiper_df):
+    #count the number of introduction events by counting number of contact_pid == -1 in the E states
+    print(f"Identified {len(epihiper_df[epihiper_df['contact_pid'] == -1])} introduction events (contact_pid == -1) in the simulation.")
     infection_graph, infection_df = create_graph_classic(epihiper_df)
     # Create graph and get component IDs
     component_df = create_component_table(infection_graph)
@@ -222,7 +224,7 @@ def find_components(epihiper_df):
         first_tick=('tick', 'min'),
         component_size=('pid', 'nunique') # Size is the number of unique people in the component
     ).reset_index()
-    print(f"Found {len(component_summary)} unique transmission components in the simulation.")
+    print(f"Found {len(component_summary)} unique transmission chains in the simulation.")
     return merged_df, component_summary
 
 def create_labels(epihiper_df, schedule_df, mode):
