@@ -112,6 +112,8 @@ def process_epihiper(
     loader = DemographicsLoader(persontrait_path, use_pyarrow=True, skiprows=1, county_lookup=True)
     person_df = loader.get_dataframe()
     person_df = person_df.reset_index() # Ensure 'pid' is a column for merging
+    events_df['pid'] = events_df['pid'].astype(str)
+    person_df['pid'] = person_df['pid'].astype(str)
     print(f"Loading household data from {household_path}...")
     hh_loader = DemographicsLoader(household_path, use_pyarrow=True)
     household_df = hh_loader.get_dataframe()
