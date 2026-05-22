@@ -524,6 +524,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=None, help="Base random seed for reproducibility.")
     p.add_argument("--n_seeds", type=int, default=1, help="Number of different seeds to generate linelists with.")
     p.add_argument("--prefix_override", type=str, default='["A", "P", "I", "dm", "hM"]', help="A JSON-formatted string of exit_state prefixes to filter")
+    p.add_argument("--target_variant", type=str, default=None, 
+                   help="Filter all simulation events to a specific variant number (e.g., '2').")
     p.add_argument("--exposed_filter", type=str, default='["E"]', help="A JSON-formatted string of exit_state prefixes to filter")
     p.add_argument("--test_alias_graph", action='store_true', default=False, help="If set, runs a unit test to validate that the alias_contact and alias_pid columns perfectly reconstruct the transmission graph.")
         
@@ -553,6 +555,20 @@ def main():
     except FileNotFoundError:
         print(f"Error: EpiHiper input file not found at {args.epihiper}")
         sys.exit(1)
+
+    # --- Step 1.5 Apply Variant Filter ---
+    if args.target_variant is not None:
+        initial_rows = len(epi_df)
+        print(f"Filtering full simulation for Variant {args.target_variant} events...")
+        # This matches the number right before the underscore (e.g., '2_')
+        # So it matches 'E2_s', 'P2_a', 'I2_o', but ignores 'E1_s'
+        variant_pattern = f"{args.target_variant}_"
+        epi_df = epi_df[epi_df['exit_state'].str.contains(variant_pattern)].copy()
+        print(f"Dropped {(initial_rows - len(epi_df)):,} irrelevant variant rows. Kept {len(epi_df):,} events.")
+
+    if epi_df.empty:
+        print("No events found for the specified variant. Exiting.")
+        sys.exit(0)
 
     # --- Step 2: Apply Time Filtering FIRST ---
     if args.start_tick is not None or args.stop_tick is not None:
