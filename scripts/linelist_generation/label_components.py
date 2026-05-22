@@ -204,12 +204,7 @@ def mode2_bipartite_match(sim_components, real_imports, time_weight=0.7, max_tim
         
     return assignments
 
-def create_labels(epihiper_df, schedule_df, mode):
-    """
-    Processes epihiper simulation, identifies components, and assigns variant labels
-    based on a real-world importation schedule.
-    """
-
+def find_components(epihiper_df):
     infection_graph, infection_df = create_graph_classic(epihiper_df)
     # Create graph and get component IDs
     component_df = create_component_table(infection_graph)
@@ -224,13 +219,22 @@ def create_labels(epihiper_df, schedule_df, mode):
         component_size=('pid', 'nunique') # Size is the number of unique people in the component
     ).reset_index()
     print(f"Found {len(component_summary)} unique transmission components in the simulation.")
+    return merged_df, component_summary
 
-    assignment_map = {}
+def create_labels(epihiper_df, schedule_df, mode):
+    """
+    Identifies components and propagates aliases. Optionally assigns variants 
+    based on a real-world importation schedule.
+    """
+    # 1. Get components using your new function
+    merged_df, component_summary = find_components(epihiper_df)
 
-    if schedule_df is not None:
-        print(f"Loaded real-world importation schedule with {len(schedule_df)} entries.")
-        # --- Prepare Real-World Importation Data ---
-        print("Step 2: Preparing real-world importation schedule...")
+    # 2. Assign Variants OR Skip (just_components)
+    if mode == 'just_components' or schedule_df is None:
+        print("  Skipping schedule matching (mode: just_components).")
+        component_summary['variant_label'] = 'unassigned'
+    else:
+        print("  Preparing real-world importation schedule...")
         # "Unroll" the schedule from the clusters column
         real_imports_list = []
         for _, row in schedule_df.iterrows():
@@ -243,63 +247,44 @@ def create_labels(epihiper_df, schedule_df, mode):
                     'sample_count': avg_sample_count
                 })
         real_imports_df = pd.DataFrame(real_imports_list)
-        print(f"Unrolled schedule into {len(real_imports_df)} individual importation events.")
-
-        # --- Assign Variants based on Mode ---
-        print(f"Step 3: Assigning variants to components using Mode {mode}...")
-        if mode == "variant_temporal":
-            assignment_map = mode1_temporal_match(component_summary, real_imports_df)
-        elif mode == "variant_bipartite":
-            assignment_map = mode2_bipartite_match(component_summary, real_imports_df, time_weight=0.7, max_time_penalty_days=90)
         
-    if not assignment_map:
-        print("Warning: No variant assignments were made. Components will not be labeled.")
-        merged_df['variant_label'] = 'unassigned'
+        # Apply Matching
+        assignment_map = {}
+        if mode == 'variant_temporal':
+            assignment_map = mode1_temporal_match(component_summary, real_imports_df)
+        elif mode == 'variant_bipartite':
+            assignment_map = mode2_bipartite_match(component_summary, real_imports_df, time_weight=0.7, max_time_penalty_days=90)
+            
+        component_summary['variant_label'] = component_summary['component_id'].map(assignment_map)
+        component_summary['variant_label'].fillna('unassigned', inplace=True)
 
-    # --- Apply Labels ---
-    print("Step 4: Applying labels to the full simulation dataframe...")
-    # Map the assigned variants to the component summary
-    component_summary['variant_label'] = component_summary['component_id'].map(assignment_map)
-    # Fill any unassigned components (if sim has more components than real imports)
-    component_summary['variant_label'].fillna('unassigned', inplace=True)
-    
-    #create alias_pid for epihiper_df
-    #epihiper_df['alias_pid'] = (epihiper_df['pid'].astype(str) + '.' + epihiper_df['tick'].astype(str))
-
-    # Merge the final labels into the full infection dataframe
+    # 3. Propagate component_id, variant_label, alias_pid, and alias_contact
+    print("  Propagating labels and aliases to the full simulation dataframe...")
     final_df = pd.merge(merged_df, component_summary[['component_id', 'variant_label']], on='component_id', how='left')
-    
-    # propagate component_id and variant_label.
 
-    # 1. Prepare the Source of Truth
-    # We need a dataframe of just the "Labeled Events" sorted by time.
-    # Assuming final_df contains the events where the label was established.
-    
+    # Prepare Source of Truth
     label_source = final_df[['tick', 'pid', 'component_id', 'variant_label', 'alias_pid', 'alias_contact']].copy()
     label_source = label_source.sort_values('tick')
 
-    # 2. Prepare the Target (Full Simulation)
-    # merge_asof requires the left dataframe (epihiper_df) to be sorted by tick
+    # Prepare Target
     if not epihiper_df['tick'].is_monotonic_increasing:
-        print("Sorting epihiper_df by tick for label propagation...")
+        print("  Sorting epihiper_df by tick for label propagation...")
         epihiper_df.sort_values('tick', inplace=True)
 
+    # --- CRITICAL FIX PRESERVED: Align Data Types Before Merge ---
     epihiper_df['pid'] = epihiper_df['pid'].astype(str)
     label_source['pid'] = label_source['pid'].astype(str)
     
     epihiper_df['tick'] = epihiper_df['tick'].astype(int)
     label_source['tick'] = label_source['tick'].astype(int)
-    # 3. Propagate Labels (The Replacement Logic)
-    # This replaces BOTH the .map() and the .groupby().ffill()
-    # Logic: For every row in epihiper_df, look backwards to find the 
-    # most recent record for this PID in label_source.
-    print("Propagating variant labels using time-aware merge...")
-    
-    # We drop existing columns if they exist to avoid suffix conflicts (_x, _y)
+    # -------------------------------------------------------------
+
+    # Clean up existing columns to avoid suffix conflicts (_x, _y)
     cols_to_drop = [c for c in ['component_id', 'variant_label', 'alias_pid', 'alias_contact'] if c in epihiper_df.columns]
     if cols_to_drop:
         epihiper_df.drop(columns=cols_to_drop, inplace=True)
 
+    # Perform Time-Aware Broadcast
     epihiper_df = pd.merge_asof(
         epihiper_df,
         label_source,
@@ -308,10 +293,11 @@ def create_labels(epihiper_df, schedule_df, mode):
         direction='backward'
     )
 
-    # 4. Fill Background/Unlabeled
-    # Anyone who hasn't had a labeled event yet gets the default
+    # 4. Fill Background/Unlabeled for agents with no exposure event
     epihiper_df['variant_label'] = epihiper_df['variant_label'].fillna('background')
     epihiper_df['component_id'] = epihiper_df['component_id'].fillna(-1).astype(int)
+    epihiper_df['alias_contact'] = epihiper_df['alias_contact'].fillna("-1")
+    epihiper_df['alias_pid'] = epihiper_df['alias_pid'].fillna(epihiper_df['pid'].astype(str) + '.' + epihiper_df['tick'].astype(str))
 
     return epihiper_df
 

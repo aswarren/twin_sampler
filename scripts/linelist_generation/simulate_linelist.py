@@ -574,25 +574,29 @@ def main():
         print("Error: label_components.py could not be imported. Exiting.")
         sys.exit(1)
 
-    # --- Step 3: (Conditional) Apply Variant Labeling to the TIME-FILTERED DataFrame ---
-    if args.schedule_input and args.variant_mode != 'just_components':
+# --- Step 3: Apply Component/Variant Labeling and Alias Propagation ---
+    # Validate arguments
+    if args.variant_mode != 'just_components' and not args.schedule_input:
+        print("Error: --schedule_input is required unless --variant_mode is 'just_components'.")
+        sys.exit(1)
+
+    sched_df = None
+    if args.variant_mode != 'just_components':
         print(f"Loading schedule data from: {args.schedule_input}")
         try:
             sched_df = pd.read_csv(args.schedule_input)
-            print(f"Applying variant labels to time-filtered simulation using mode {args.variant_mode}...")
-            # This call now receives the time-filtered data and returns it with labels
-            labeled_df = create_labels(epi_df, sched_df, args.variant_mode)
-            print("Variant labeling complete.")
         except FileNotFoundError:
             print(f"Error: Schedule file not found at {args.schedule_input}. Exiting.")
             sys.exit(1)
-        except Exception as e:
-            print(f"An error occurred during variant labeling: {e}. Exiting.")
-            sys.exit(1)
-    else:
-        print("Labeling components and alias infection ids")
-        labeled_df = create_labels(epi_df, None, args.variant_mode)
-        labeled_df['variant_label'] = 'unassigned'
+
+    print(f"Applying component labels and aliases using mode '{args.variant_mode}'...")
+    try:
+        # Call create_labels unconditionally. It will handle the 'just_components' bypass internally.
+        labeled_df = create_labels(epi_df, sched_df, args.variant_mode)
+        print("Labeling and alias propagation complete.")
+    except Exception as e:
+        print(f"An error occurred during labeling/alias propagation: {e}. Exiting.")
+        sys.exit(1)
     
     if args.test_alias_graph:
         print("Running unit test to validate alias graph reconstruction...")
