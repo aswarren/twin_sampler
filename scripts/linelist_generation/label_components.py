@@ -210,8 +210,7 @@ def mode2_bipartite_match(sim_components, real_imports, time_weight=0.7, max_tim
 
 def find_components(epihiper_df):
     #count the number of introduction events by counting number of contact_pid == -1 in the E states
-    print(f"Identified {len(epihiper_df[epihiper_df[epihiper_df['exit_state'].str.startswith('E')] & epihiper_df['contact_pid'] == -1])} introduction events (contact_pid == -1) in the simulation.")
-    infection_graph, infection_df = create_graph_classic(epihiper_df)
+    print(f"Identified {len(epihiper_df[(epihiper_df['exit_state'].str.startswith('E')) & (epihiper_df['contact_pid'] == -1)])} introduction events (contact_pid == -1) in the simulation.")    infection_graph, infection_df = create_graph_classic(epihiper_df)
     # Create graph and get component IDs
     component_df = create_component_table(infection_graph)
     #infection_df = epihiper_df[epihiper_df['exit_state'].str.startswith('E')].copy()
