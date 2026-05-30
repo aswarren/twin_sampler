@@ -51,7 +51,8 @@ EXPOSED_FILTER="[\"E2\"]"
 
 # A fixed random seed for reproducibility
 SEED=42
-VARIANT_MODE=2 # The variant labeling mode (1 or 2)
+VARIANT_MODE="variant_bipartite" # The variant labeling mode (1 or 2)
+TARGET_VARIANT=2
 
 # --- Processing Logic ---
 echo "Processing input file: $EPIHIPER_FILE"
@@ -91,6 +92,8 @@ cmd=(
     "--schedule_input"
     "${SCHEDULE_FILE}"
     "--variant_mode"
+    "${VARIANT_MODE}"
+    "--target_variant"
     "${VARIANT_MODE}"
 )
 
