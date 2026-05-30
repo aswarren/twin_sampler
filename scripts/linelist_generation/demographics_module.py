@@ -34,7 +34,7 @@ class DemographicsLoader:
         """Loads the CSV and applies universal schema rules."""
         engine = "pyarrow" if use_pyarrow else "c"
         try:
-            df = pd.read_csv(self.filepath, engine=engine, skiprows=skiprows, dtype={'pid': str})
+            df = pd.read_csv(self.filepath, engine=engine, skiprows=skiprows)
         except (ImportError, ValueError):
             print("Warning: pyarrow engine failed or not installed, falling back to default C engine.")
             df = pd.read_csv(self.filepath, skiprows=skiprows)
@@ -50,6 +50,7 @@ class DemographicsLoader:
 
         # 3. Set Index for fast row-by-row lookups
         if 'pid' in df.columns:
+            df['pid'] = df['pid'].astype(str) # Ensure pid is string for consistent indexing
             df.set_index('pid', inplace=True)
 
         # 4. Standardize smh_race
