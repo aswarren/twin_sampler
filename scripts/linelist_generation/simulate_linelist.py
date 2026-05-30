@@ -168,12 +168,12 @@ def _normalize_age_group_column(df: pd.DataFrame) -> pd.DataFrame:
 
 def load_inputs(people_path: str, infection_path: str, households_path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     # Load people
-    people_df = pd.read_csv(people_path, sep=",", skiprows=1)
+    people_df = pd.read_csv(people_path, sep=",", skiprows=1, dtype={'pid': str})
     # standardize id column name used downstream
     people_df = people_df.rename(columns={"pid": "sim_pid"})
 
     # Load infection; the original code skipped only row 1
-    infection_df = pd.read_csv(infection_path, sep="\t", skiprows=[1])
+    infection_df = pd.read_csv(infection_path, sep="\t", skiprows=[1], dtype={'pid': str, 'contact_pid': str})
 
     # Bring in county_fips, hid, occupation_socp from people
     cols_to_merge = []
@@ -553,7 +553,7 @@ def main():
     # --- Step 1: Load Full Simulation Data ---
     print(f"Loading initial EpiHiper data from {args.epihiper}...")
     try:
-        epi_df = pd.read_csv(args.epihiper)
+        epi_df = pd.read_csv(args.epihiper, dtype={'pid': str, 'contact_pid': str})
     except FileNotFoundError:
         print(f"Error: EpiHiper input file not found at {args.epihiper}")
         sys.exit(1)
