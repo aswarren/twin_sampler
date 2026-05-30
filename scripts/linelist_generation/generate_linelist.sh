@@ -94,7 +94,7 @@ cmd=(
     "--variant_mode"
     "${VARIANT_MODE}"
     "--target_variant"
-    "${VARIANT_MODE}"
+    "${TARGET_VARIANT}"
 )
 
 # --- Echo and Execute the command ---
