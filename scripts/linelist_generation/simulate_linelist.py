@@ -103,7 +103,7 @@ def process_epihiper(
         direction='backward', # Look for exposures in the past
         suffixes=('', '_exposure') # Should not be needed if we dropped contact_pid above
     )
-    events_df['contact_pid'] = events_df['contact_pid'].fillna(-1).astype(int)
+    events_df['contact_pid'] = events_df['contact_pid'].fillna("-1").astype(str)
 
 
     # 2. Load decoration data
@@ -359,7 +359,7 @@ def generate_mugration_json(events_df: pd.DataFrame, output_path: str):
     # 4. Calculate Transfer Rates
     # Filter for valid, inter-county transmissions only
     inter_county_df = df[
-        (df['contact_pid'] != -1) & 
+        (df['contact_pid'] != "-1") & 
         (df['origin_county'].notna()) & 
         (df['dest_county'].notna()) & 
         (df['origin_county'] != df['dest_county'])
